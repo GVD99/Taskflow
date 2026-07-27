@@ -84,6 +84,7 @@ details summary{cursor:pointer;font-weight:600;font-size:13px;padding:4px 0}
 .cl-item{display:flex;gap:6px;font-size:12.5px;padding:2px 0;cursor:pointer;align-items:flex-start}
 .cl-item:hover{color:var(--blue)}
 .cl-item.done{color:var(--muted);text-decoration:line-through}
+.ghost{opacity:.55;border:1px dashed currentColor;background:transparent!important}
 textarea{width:100%;resize:vertical;line-height:1.5}
 @media(max-width:640px){body{padding:10px}}
 </style>
@@ -121,6 +122,18 @@ function fmt(iso){if(!iso)return'';const d=new Date(iso+'T12:00:00');return d.to
 function daysDiff(iso){const a=new Date(today()+'T12:00:00'),b=new Date(iso+'T12:00:00');return Math.round((b-a)/86400000);}
 function addMonths(iso,n){const d=new Date(iso+'T12:00:00');const day=d.getDate();d.setMonth(d.getMonth()+n);if(d.getDate()!==day)d.setDate(0);return d.toISOString().slice(0,10);}
 function nextRecur(iso,r){return r==='zi'?addDays(iso,1):r==='sapt'?addDays(iso,7):r==='luna'?addMonths(iso,1):r==='trim'?addMonths(iso,3):r==='sem'?addMonths(iso,6):addMonths(iso,12);}
+/* ocurențele viitoare ale unui task recurent, într-un interval */
+function occurrencesIn(tk,from,to){
+  const out=[];if(!tk.recur||tk.status!=='active')return out;
+  let d=tk.deadline,guard=0;
+  while(guard++<500){
+    d=nextRecur(d,tk.recur);
+    if(tk.until&&d>tk.until)break;
+    if(d>to)break;
+    if(d>=from)out.push(d);
+  }
+  return out;
+}
 function escalated(tk){return tk.type==='normal'&&tk.status==='active'&&daysDiff(tk.deadline)<=2;}
 
 /* ---------- state ---------- */
@@ -324,10 +337,19 @@ function processExpiries(){
     if(tk.recur){ // recurring: auto-expire, roll forward
       let missed=0,d=tk.deadline;
       while(d<t){d=nextRecur(d,tk.recur);missed++;}
+      if(tk.until&&d>tk.until){
+        tk.status='done';tk.doneAt=t;
+        bootNotifs.push({txt:'🏁 „'+tk.title+'” — seria recurentă s-a încheiat (până la '+fmt(tk.until)+').'});
+        continue;
+      }
       tk.missed=(tk.missed||0)+missed;tk.deadline=d;
       (tk.postponements=tk.postponements||[]).push({date:t,auto:true,kind:'recurent'});
       bootNotifs.push({txt:'🔁 „'+tk.title+'” (recurent) a expirat automat și a fost mutat la '+fmt(d)+'.'});
       keep.push(tk);
+    } else if(tk.until&&tk.deadline>tk.until){ // a depășit data de expirare
+      tk.status='done';tk.doneAt=t;
+      bootNotifs.push({txt:'🏁 „'+tk.title+'” a expirat (data limită '+fmt(tk.until)+') și a fost închis.'});
+      continue;
     } else if(tk.type==='normal'){ // normal: rolls to current day, no pressure, no delete
       const old=tk.deadline;tk.deadline=t;tk.rolls=(tk.rolls||0)+1;
       (tk.postponements=tk.postponements||[]).push({date:t,auto:true,from:old,to:t,kind:'normal'});
@@ -467,7 +489,12 @@ function completeTask(id){
   const tk=S.tasks.find(x=>x.id===id);if(!tk)return;
   if(tk.checklist&&tk.checklist.some(c=>!c.done)){alert('„'+tk.title+'” are subtaskuri nebifate — se poate închide doar după rezolvarea tuturor.');return;}
   const t=today();dl(t).completed.push({id:tk.id,title:tk.title,projectId:tk.projectId,type:tk.type});
-  if(tk.recur){tk.deadline=nextRecur(tk.deadline<t?t:tk.deadline,tk.recur);tk.alert=false;tk.done=(tk.done||0)+1;}
+  if(tk.recur){
+    const nx=nextRecur(tk.deadline<t?t:tk.deadline,tk.recur);
+    if(tk.until&&nx>tk.until){tk.status='done';tk.doneAt=t;alert('🏁 „'+tk.title+'” — a fost ultima repetare din serie (până la '+fmt(tk.until)+').');}
+    else{tk.deadline=nx;tk.alert=false;tk.done=(tk.done||0)+1;
+      if(tk.checklist)tk.checklist.forEach(c=>c.done=false);}
+  }
   else{tk.status='done';tk.doneAt=t;}
   save();render();
 }
@@ -553,7 +580,8 @@ function taskRow(tk,opts){
   else if(escalated(tk))badges+='<span class="badge b-red">Prioritar · termen aproape</span>';
   else if(tk.type==='normal')badges+='<span class="badge b-green">Normal'+(tk.manualDue?'':' · azi')+(tk.rolls?' · reportat '+tk.rolls+'x':'')+'</span>';
   else badges+='<span class="badge b-blue">De îmbunătățit</span>';
-  if(tk.recur)badges+='<span class="badge b-gray">🔁 '+RECUR_LABEL[tk.recur]+'</span>';
+  if(tk.recur)badges+='<span class="badge b-gray">🔁 '+RECUR_LABEL[tk.recur]+(tk.until?' până '+fmt(tk.until):'')+'</span>';
+  else if(tk.until)badges+='<span class="badge b-gray">expiră '+fmt(tk.until)+'</span>';
   if(tk.delegatedTo)badges+='<span class="badge b-amber">👤 '+esc(tk.delegatedTo)+'</span>';
   const pinnedNow=dl(today()).proposed.includes(tk.id);
   if(pinnedNow)badges+='<span class="badge b-amber">📌 azi</span>';
@@ -601,6 +629,7 @@ function viewAzi(){
     +'<select id="qa-type"><option value="normal">Normal ('+(S.cfg.norm?'+'+S.cfg.norm+' zile':'azi')+')</option><option value="urgent">Prioritar ('+S.cfg.urg+' zile lucr.)</option><option value="imbunatatit">De îmbunătățit ('+S.cfg.imb+' zile)</option><option value="waiting">În așteptare (verific în '+S.cfg.wait+' zile lucr.)</option></select>'
     +'<select id="qa-recur"><option value="">fără recurență</option><option value="zi">zilnic</option><option value="sapt">săptămânal</option><option value="luna">lunar</option><option value="trim">trimestrial</option><option value="sem">semestrial</option><option value="an">anual</option></select>'
     +'<input type="date" id="qa-dead" title="Scadență (opțional — dacă o lași goală se aplică termenul implicit al tipului)" style="width:140px">'
+    +'<label class="mini" title="Data de expirare: după ea taskul nu mai apare (la recurente se oprește seria)">expiră la <input type="date" id="qa-until" style="width:140px"></label>'
     +'<input id="qa-deleg" placeholder="Delegat către / aștept de la…" style="width:150px">'
     +'<button class="primary" onclick="quickAdd()">Adaugă</button></div>'
     +'<div id="qa-hint"></div></div>';
@@ -627,7 +656,8 @@ function editTask(id){
     +'<label class="mini">Recurență <select id="e-recur">'+recurOpts+'</select></label></div>'
     +'<div class="row" style="margin-bottom:14px">'
     +'<label class="mini">Scadență <input type="date" id="e-dead" value="'+tk.deadline+'"></label>'
-    +'<label class="mini">Delegat / aștept de la <input id="e-deleg" value="'+esc(tk.delegatedTo||'')+'" placeholder="—"></label></div>'
+    +'<label class="mini">Delegat / aștept de la <input id="e-deleg" value="'+esc(tk.delegatedTo||'')+'" placeholder="—"></label>'
+    +'<label class="mini" title="După această dată taskul nu mai apare; la recurente se oprește seria">Expiră la <input type="date" id="e-until" value="'+(tk.until||'')+'"></label></div>'
     +'<label class="mini" style="display:block;margin-bottom:14px">Subtaskuri — unul pe rând (taskul se închide doar când toate sunt bifate; șterge rândurile ca să le elimini)'
     +'<textarea id="e-cl" rows="4" placeholder="- subpunct 1&#10;- subpunct 2">'+esc((tk.checklist||[]).map(c=>c.txt).join('\n'))+'</textarea></label>'
     +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button>'
@@ -648,6 +678,7 @@ function saveEdit(id){
     (tk.postponements=tk.postponements||[]).push({date:today(),auto:false,from:tk.deadline,to:d,kind:'manual'});
     tk.deadline=d;tk.alert=false;if(tk.type==='normal')tk.manualDue=true;
   }
+  const u=document.getElementById('e-until').value;tk.until=/^\d{4}-\d{2}-\d{2}$/.test(u)?u:null;
   const clLines=document.getElementById('e-cl').value.split('\n').map(s=>s.replace(/^[\s•*\-]+/,'').trim()).filter(Boolean);
   if(clLines.length){
     const old=tk.checklist||[];
@@ -669,6 +700,7 @@ function quickAdd(){
   const ntk=addTask(title,document.getElementById('qa-proj').value,document.getElementById('qa-type').value,qd,
     document.getElementById('qa-recur').value,document.getElementById('qa-deleg').value,true);
   if(qd&&ntk.type==='normal')ntk.manualDue=true;
+  const qu=document.getElementById('qa-until').value;if(qu)ntk.until=qu;
   render();
   if(matches.length){
     document.getElementById('qa-hint').innerHTML='<div class="hint">💡 Seamănă cu taskuri mai vechi — e un moment bun să le închizi pe cele istorice: '
@@ -734,6 +766,10 @@ function viewWeek(){
   const days=[];for(let i=0;i<5;i++)days.push(addDays(start,i));
   const byDate={};S.tasks.filter(x=>x.status==='active').forEach(x=>{(byDate[x.deadline]=byDate[x.deadline]||[]).push(x);});
   const doneBy={};Object.keys(S.dayLog).forEach(d=>{(S.dayLog[d].completed||[]).forEach(c=>{(doneBy[d]=doneBy[d]||[]).push(c);});});
+  const ghostBy={};
+  S.tasks.filter(x=>x.status==='active'&&x.recur).forEach(x=>{
+    occurrencesIn(x,days[0],addDays(start,6)).forEach(d=>{(ghostBy[d]=ghostBy[d]||[]).push(x);});
+  });
   const names=['Luni','Marți','Miercuri','Joi','Vineri'];
   let h='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:10px">'
     +'<button class="ghost" onclick="weekShift(-1)">← săpt. prec.</button>'
@@ -745,7 +781,8 @@ function viewWeek(){
     h+='<div class="wk-col'+(iso===t?' today':'')+'" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')"><div class="wk-h">'+names[i]+'<br><span class="mini">'+fmt(iso)+'</span></div>'
       +ts.map(x=>'<div class="wk-item '+((x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue')+'"'+(VIEWALL?'':' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab" title="Click = editare · Trage = mută scadența" onclick="editTask(\''+x.id+'\')"')+'>'+esc(x.title)+'</div>').join('')
       +ds.map(c=>'<div class="wk-item c-green">✓ '+esc(c.title)+'</div>').join('')
-      +((!ts.length&&!ds.length)?'<div class="mini" style="text-align:center;padding-top:12px">—</div>':'')
+      +(ghostBy[iso]||[]).map(x=>'<div class="wk-item c-blue ghost" title="Repetare programată — '+RECUR_LABEL[x.recur]+'">🔁 '+esc(x.title)+'</div>').join('')
+      +((!ts.length&&!ds.length&&!(ghostBy[iso]||[]).length)?'<div class="mini" style="text-align:center;padding-top:12px">—</div>':'')
       +'</div>';
   }
   h+='</div><p class="mini" style="margin-top:8px">Click pe un task → editare (poți muta scadența pentru a echilibra săptămâna). Verde = finalizat.</p></div>';
@@ -763,6 +800,13 @@ function viewCalendar(){
   S.tasks.filter(x=>x.status==='active').forEach(x=>{(byDate[x.deadline]=byDate[x.deadline]||[]).push(x);});
   const doneBy={};
   Object.keys(S.dayLog).forEach(d=>{(S.dayLog[d].completed||[]).forEach(c=>{(doneBy[d]=doneBy[d]||[]).push(c);});});
+  /* proiecția ocurențelor viitoare ale taskurilor recurente în luna afișată */
+  const mFrom=CAL.y+'-'+String(CAL.m+1).padStart(2,'0')+'-01';
+  const mTo=CAL.y+'-'+String(CAL.m+1).padStart(2,'0')+'-'+String(new Date(CAL.y,CAL.m+1,0).getDate()).padStart(2,'0');
+  const ghostBy={};
+  S.tasks.filter(x=>x.status==='active'&&x.recur).forEach(x=>{
+    occurrencesIn(x,mFrom,mTo).forEach(d=>{(ghostBy[d]=ghostBy[d]||[]).push(x);});
+  });
   let h='<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:10px">'
     +'<button class="ghost" onclick="calShift(-1)">← luna prec.</button>'
     +'<h2 style="text-transform:capitalize">'+esc(monthName)+'</h2>'
@@ -774,21 +818,25 @@ function viewCalendar(){
     const wd=new Date(CAL.y,CAL.m,d).getDay();
     const ts=(byDate[iso]||[]),ds=(doneBy[iso]||[]);
     const chips=ts.map(x=>({t:x.title,c:(x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue',pre:'',id:x.id}))
-      .concat(ds.map(x=>({t:x.title,c:'c-green',pre:'✓ '})));
+      .concat(ds.map(x=>({t:x.title,c:'c-green',pre:'✓ '})))
+      .concat((ghostBy[iso]||[]).map(x=>({t:x.title,c:'c-blue ghost',pre:'🔁 '})));
     h+='<div class="cal-c'+(iso===t?' today':'')+(iso===CAL_SEL?' sel':'')+((wd===0||wd===6)?' wknd':'')+'" onclick="setCalDay(\''+iso+'\')" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')">'
       +'<div class="cal-d">'+d+(chips.length?' · '+chips.length:'')+'</div>'
       +chips.slice(0,3).map(x=>'<div class="cal-chip '+x.c+'"'+((x.id&&!VIEWALL)?' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab"':'')+' title="'+esc(x.pre+x.t)+'">'+x.pre+esc(x.t)+'</div>').join('')
       +(chips.length>3?'<div class="mini">+'+(chips.length-3)+' încă</div>':'')
       +'</div>';
   }
-  h+='</div><p class="mini" style="margin-top:8px"><span class="cal-chip c-red" style="display:inline">Prioritar</span> <span class="cal-chip c-amber" style="display:inline">Normal</span> <span class="cal-chip c-blue" style="display:inline">De îmbunătățit</span> <span class="cal-chip c-gray" style="display:inline">În așteptare</span> <span class="cal-chip c-green" style="display:inline">✓ Finalizat</span> — termene viitoare + istoricul realizărilor.</p></div>';
+  h+='</div><p class="mini" style="margin-top:8px"><span class="cal-chip c-red" style="display:inline">Prioritar</span> <span class="cal-chip c-amber" style="display:inline">Normal</span> <span class="cal-chip c-blue" style="display:inline">De îmbunătățit</span> <span class="cal-chip c-gray" style="display:inline">În așteptare</span> <span class="cal-chip c-green" style="display:inline">✓ Finalizat</span> <span class="cal-chip c-blue ghost" style="display:inline">🔁 Repetare viitoare</span> — termene, istoric și proiecția recurentelor.</p></div>';
   const sel=(byDate[CAL_SEL]||[]).sort((a,b)=>a.type==='urgent'?-1:1);
   const selDone=doneBy[CAL_SEL]||[];
+  const selGhost=ghostBy[CAL_SEL]||[];
   h+='<div class="card"><div class="sec-title"><h2>📅 '+fmt(CAL_SEL)+'</h2><span class="badge b-gray">'+(sel.length+selDone.length)+'</span></div>'
     +(sel.length?sel.map(x=>taskRow(x)).join(''):'')
     +(selDone.length?'<div style="margin-top:8px"><span class="badge b-green">Finalizate în această zi: '+selDone.length+'</span>'
       +selDone.map(c=>'<div class="day-item" style="color:var(--green)">✓ '+esc(c.title)+' <span class="mini">· '+esc(proj(c.projectId).name)+'</span></div>').join('')+'</div>':'')
-    +((!sel.length&&!selDone.length)?'<div class="empty">Nimic în această zi.</div>':'')
+    +(selGhost.length?'<div style="margin-top:8px"><span class="badge b-gray">🔁 Repetări programate: '+selGhost.length+'</span>'
+      +selGhost.map(x=>'<div class="day-item" style="opacity:.7">🔁 '+esc(x.title)+' <span class="mini">· '+esc(proj(x.projectId).name)+' · '+RECUR_LABEL[x.recur]+'</span></div>').join('')+'</div>':'')
+    +((!sel.length&&!selDone.length&&!selGhost.length)?'<div class="empty">Nimic în această zi.</div>':'')
     +((CAL_SEL<=t&&!VIEWALL)?'<div class="row" style="margin-top:10px"><input class="grow" id="rc-title" placeholder="Am mai făcut în această zi… (Enter)" onkeydown="if(event.key===\'Enter\')addRetro()">'
       +'<select id="rc-proj">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
       +'<button class="ghost" onclick="addRetro()">✓ Adaugă ca finalizat</button></div>':'')
