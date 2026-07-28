@@ -975,8 +975,10 @@ function viewSetari(){
       +'<button class="icon-btn" title="Redenumește" onclick="renameProfile(\''+p.id+'\')">✏️</button>'
       +(ROOT.profiles.length>1?'<button class="icon-btn" title="Șterge utilizatorul" onclick="deleteProfile(\''+p.id+'\')">✕</button>':'')+'</div>').join('')
     +'<div class="row" style="margin-top:10px"><button class="ghost" onclick="addProfile()">+ Adaugă utilizator</button></div></div>';
-  h+='<div class="card"><h2>Proiecte</h2>'
-    +S.projects.map(p=>'<div class="day-item" style="display:flex;align-items:center;gap:6px"><span class="proj-dot" style="background:'+p.color+'"></span><span style="flex:1">'+esc(p.name)+'</span>'
+  h+='<div class="card"><h2>Proiecte</h2><p class="mini" style="margin-bottom:8px">Ordinea de aici se aplică peste tot: la adăugarea taskurilor, în tabul Proiecte și în rapoarte. Primul din listă e cel implicit selectat.</p>'
+    +S.projects.map((p,ix)=>'<div class="day-item" style="display:flex;align-items:center;gap:6px"><span class="proj-dot" style="background:'+p.color+'"></span><span style="flex:1">'+esc(p.name)+'</span>'
+      +'<button class="icon-btn" title="Mai sus"'+(ix===0?' disabled style="opacity:.3"':'')+' onclick="moveProject(\''+p.id+'\',-1)">▲</button>'
+      +'<button class="icon-btn" title="Mai jos"'+(ix===S.projects.length-1?' disabled style="opacity:.3"':'')+' onclick="moveProject(\''+p.id+'\',1)">▼</button>'
       +'<button class="icon-btn" title="Redenumește" onclick="renameProject(\''+p.id+'\')">✏️</button>'
       +'<button class="icon-btn" title="Șterge proiectul" onclick="deleteProject(\''+p.id+'\')">✕</button></div>').join('')
     +'<div class="row" style="margin-top:10px"><input class="grow" id="np-name" placeholder="Proiect nou…"><button class="ghost" onclick="addProject()">Adaugă proiect</button></div></div>';
@@ -1013,6 +1015,12 @@ function viewSetari(){
 }
 function addProject(){const n=document.getElementById('np-name').value.trim();if(!n)return;S.projects.push({id:'p'+Date.now(),name:n,color:COLORS[S.projects.length%COLORS.length]});save();render();}
 function setCfg(k,v){S.cfg[k]=+v;save();render();}
+function moveProject(id,dir){
+  const i=S.projects.findIndex(x=>x.id===id);const j=i+dir;
+  if(i<0||j<0||j>=S.projects.length)return;
+  const p=S.projects.splice(i,1)[0];S.projects.splice(j,0,p);
+  save();render();
+}
 function renameProject(id){
   const p=S.projects.find(x=>x.id===id);if(!p)return;
   const v=prompt('Nume nou pentru proiect:',p.name);
