@@ -85,6 +85,15 @@ details summary{cursor:pointer;font-weight:600;font-size:13px;padding:4px 0}
 .cl-item:hover{color:var(--blue)}
 .cl-item.done{color:var(--muted);text-decoration:line-through}
 .ghost{opacity:.55;border:1px dashed currentColor;background:transparent!important}
+
+#mm-wrap{border:1px solid var(--line);border-radius:10px;background:#fff;height:72vh;overflow:auto;position:relative;background-image:radial-gradient(#e5e7eb 1px,transparent 1px);background-size:24px 24px}
+#mm-canvas{position:relative;transform-origin:0 0}
+#mm-svg{position:absolute;left:0;top:0;pointer-events:none}
+.mm-node{position:absolute;max-width:240px;min-width:90px;padding:7px 11px;border:2px solid #94a3b8;border-radius:10px;background:#fff;font-size:13px;line-height:1.35;cursor:grab;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.08);white-space:pre-wrap;word-break:break-word}
+.mm-node.root{font-weight:700;font-size:15px;border-width:3px;background:var(--blue-bg)}
+.mm-node.sel{outline:3px solid rgba(37,99,235,.35);box-shadow:0 4px 14px rgba(0,0,0,.15)}
+.mm-node:active{cursor:grabbing}
+.tbar{height:6px;border-radius:3px;background:var(--blue-bg);overflow:hidden}.tbar>div{height:100%;background:var(--green)}
 textarea{width:100%;resize:vertical;line-height:1.5}
 @media(max-width:640px){body{padding:10px}}
 </style>
@@ -97,6 +106,7 @@ textarea{width:100%;resize:vertical;line-height:1.5}
     <div class="tab" data-tab="calendar" onclick="setTab('calendar')">📅 Calendar</div>
     <div class="tab" data-tab="toate" onclick="setTab('toate')">Toate</div>
     <div class="tab" data-tab="proiecte" onclick="setTab('proiecte')">Proiecte</div>
+    <div class="tab" data-tab="mindmap" onclick="setTab('mindmap')">🧠 Mindmap</div>
     <div class="tab" data-tab="idei" onclick="setTab('idei')">💡 Idei</div>
     <div class="tab" data-tab="rapoarte" onclick="setTab('rapoarte')">Rapoarte</div>
     <div class="tab" data-tab="setari" onclick="setTab('setari')">Setări</div>
@@ -157,7 +167,8 @@ function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('taskflow_k
 async function idbGet(k){try{const db=await idb();return await new Promise((res,rej)=>{const t=db.transaction('kv').objectStore('kv').get(k);t.onsuccess=()=>res(t.result);t.onerror=()=>rej(t.error);});}catch(e){return null;}}
 async function idbSet(k,v){try{const db=await idb();await new Promise((res,rej)=>{const t=db.transaction('kv','readwrite').objectStore('kv').put(v,k);t.onsuccess=()=>res();t.onerror=()=>rej(t.error);});}catch(e){}}
 
-function migrate(){if(!S.ideas)S.ideas=[];if(!S.projects)S.projects=seed().projects;if(!S.tasks)S.tasks=[];if(!S.deletedLog)S.deletedLog=[];if(!S.dayLog)S.dayLog={};if(!S.nextId)S.nextId=1;if(!S.cfg)S.cfg={urg:2,norm:0,imb:30,wait:5};}
+function migrateOne(d){if(!d)return d;(d.projects||[]).forEach(p=>{if(!p.status)p.status='activ';if(p.obj==null)p.obj='';});(d.tasks||[]).forEach(t=>{if(!t.deps)t.deps=[];});if(!d.ideas)d.ideas=[];if(!d.projects)d.projects=seed().projects;if(!d.tasks)d.tasks=[];if(!d.deletedLog)d.deletedLog=[];if(!d.dayLog)d.dayLog={};if(!d.nextId)d.nextId=1;if(!d.cfg)d.cfg={urg:2,norm:0,imb:30,wait:5};if(!d.autoLog)d.autoLog=[];return d;}
+function migrate(){if(ROOT&&ROOT.team)delete ROOT.team;migrateOne(S);if(ROOT&&ROOT.profiles)ROOT.profiles.forEach(p=>migrateOne(p.data));}
 
 /* ---------- sincronizare cloud (GitHub Gist) ---------- */
 let GH=null,cloudStatus='off',lastCloudStamp=null,cloudTimer=null;
@@ -324,6 +335,8 @@ function renderStorageBar(){
   el.innerHTML=h;
 }
 function proj(id){return S.projects.find(p=>p.id===id)||{name:'—',color:'#999'};}
+function projOpen(){return S.projects.filter(p=>p.status!=='incheiat');}
+function projStats(pid){const all=S.tasks.filter(x=>x.projectId===pid);const done=all.filter(x=>x.status==='done').length;const act=all.filter(x=>x.status==='active');const over=act.filter(x=>x.deadline<today()).length;return {done,active:act.length,over,total:done+act.length,pct:(done+act.length)?Math.round(100*done/(done+act.length)):0};}
 function dl(date){if(!S.dayLog[date])S.dayLog[date]={proposed:[],completed:[]};return S.dayLog[date];}
 function uid(){return 't'+(S.nextId++);}
 
@@ -386,6 +399,10 @@ function boot(checkMorning){
   processExpiries();
   const first=(S.lastOpen!==today());
   S.lastOpen=today();
+  if(bootNotifs.length){
+    S.autoLog=(S.autoLog||[]).concat(bootNotifs.map(n=>({d:today(),t:n.txt})));
+    if(S.autoLog.length>80)S.autoLog=S.autoLog.slice(-80);
+  }
   save();
   render();
   if(checkMorning&&ROOT.autoBk!==0&&ROOT.lastBk!==today()){
@@ -488,6 +505,7 @@ function toggleCheck(id,ix){
 function completeTask(id){
   const tk=S.tasks.find(x=>x.id===id);if(!tk)return;
   if(tk.checklist&&tk.checklist.some(c=>!c.done)){alert('„'+tk.title+'” are subtaskuri nebifate — se poate închide doar după rezolvarea tuturor.');return;}
+  const od=openDeps(tk);if(od.length&&!confirm('„'+tk.title+'” depinde de taskuri încă deschise:\n• '+od.map(o=>o.title).join('\n• ')+'\n\nÎl închizi oricum?'))return;
   const t=today();dl(t).completed.push({id:tk.id,title:tk.title,projectId:tk.projectId,type:tk.type});
   if(tk.recur){
     const nx=nextRecur(tk.deadline<t?t:tk.deadline,tk.recur);
@@ -539,25 +557,47 @@ function togglePropose(id){if(VIEWALL)return;const p=dl(today()).proposed;const 
 function azOrder(){const d=dl(today());if(!d.order)d.order=[];return d.order;}
 function sortByPlan(arr){
   const o=azOrder();
+  const rk=x=>(x.type==='urgent'||escalated(x))?0:1;
   return arr.slice().sort((a,b)=>{
     const ia=o.indexOf(a.id),ib=o.indexOf(b.id);
     if(ia>=0&&ib>=0)return ia-ib;
     if(ia>=0)return -1;
     if(ib>=0)return 1;
+    if(rk(a)!==rk(b))return rk(a)-rk(b);
     return a.deadline<b.deadline?-1:a.deadline>b.deadline?1:0;
   });
 }
+/* lista unica a zilei: prioritarele scadente + tot ce am ales cu pin */
+function azToday(){
+  const t=today(),pid=dl(t).proposed;
+  const act=S.tasks.filter(x=>x.status==='active');
+  return sortByPlan(act.filter(x=>
+    ((x.type==='urgent'||escalated(x))&&(x.deadline<=t||pid.includes(x.id)))
+    ||(pid.includes(x.id)&&!(x.type==='urgent'||escalated(x)))
+  ));
+}
+function orderPopup(){
+  const list=azToday();if(!list.length)return;
+  const rows=list.map((x,i)=>'<div class="rev-item" draggable="true" data-id="'+x.id+'" ondragstart="ordDrag(event)" ondragover="event.preventDefault()" ondrop="ordDrop(event,\''+x.id+'\')" style="display:flex;align-items:center;gap:10px;cursor:grab;padding:6px 10px">'
+    +'<select onchange="ordSet(\''+x.id+'\',this.value)" title="Poziția">'+list.map((_,j)=>'<option value="'+j+'"'+(j===i?' selected':'')+'>'+(j+1)+'</option>').join('')+'</select>'
+    +'<span style="flex:1">'+esc(x.title)+'</span>'
+    +((x.type==='urgent'||escalated(x))?'<span class="badge b-red">Prioritar</span>':'')+'<span class="mini">'+fmt(x.deadline)+'</span></div>').join('');
+  document.getElementById('modal-root').innerHTML='<div class="modal-bg" onclick="if(event.target===this)closeEdit()"><div class="modal" style="max-width:600px"><h2>↕ Ordinea zilei</h2>'
+    +'<div class="sub">Alege poziția din listă sau trage rândurile cu mouse-ul. Ordinea se salvează pe loc.</div><div id="ord-list">'+rows+'</div>'
+    +'<div class="row" style="margin-top:12px;justify-content:flex-end"><button class="primary" onclick="closeEdit()">Gata</button></div></div></div>';
+}
+let ORD_DRAG=null;
+function ordDrag(ev){ORD_DRAG=ev.currentTarget.getAttribute('data-id');ev.dataTransfer.effectAllowed='move';}
+function ordDrop(ev,targetId){ev.preventDefault();const from=ORD_DRAG;ORD_DRAG=null;if(!from||from===targetId)return;
+  const ids=azToday().map(x=>x.id);const i=ids.indexOf(from),j=ids.indexOf(targetId);if(i<0||j<0)return;
+  ids.splice(i,1);ids.splice(j,0,from);dl(today()).order=ids;save();orderPopup();}
+function ordSet(id,pos){const ids=azToday().map(x=>x.id);const i=ids.indexOf(id);if(i<0)return;ids.splice(i,1);ids.splice(+pos,0,id);dl(today()).order=ids;save();orderPopup();}
 function moveTask(id,dir){
-  const t=today();const active=S.tasks.filter(x=>x.status==='active');const proposedIds=dl(t).proposed;
-  const urg=sortByPlan(active.filter(x=>(x.type==='urgent'||escalated(x))&&(x.deadline<=t||proposedIds.includes(x.id))));
-  const pin=sortByPlan(active.filter(x=>proposedIds.includes(x.id)&&!(x.type==='urgent'||escalated(x))));
-  const inUrg=urg.some(x=>x.id===id);
-  const list=inUrg?urg:pin;
+  const list=azToday();
   const i=list.findIndex(x=>x.id===id);const j=i+dir;
   if(i<0||j<0||j>=list.length)return;
   const ids=list.map(x=>x.id);ids.splice(i,1);ids.splice(j,0,id);
-  const other=(inUrg?pin:urg).map(x=>x.id);
-  dl(t).order=inUrg?ids.concat(other):other.concat(ids);
+  dl(today()).order=ids;
   save();render();
 }
 
@@ -585,6 +625,8 @@ function taskRow(tk,opts){
   if(tk.delegatedTo)badges+='<span class="badge b-amber">👤 '+esc(tk.delegatedTo)+'</span>';
   const pinnedNow=dl(today()).proposed.includes(tk.id);
   if(pinnedNow)badges+='<span class="badge b-amber">📌 azi</span>';
+  const odp=openDeps(tk);if(odp.length)badges+='<span class="badge b-amber" title="'+esc(odp.map(o=>o.title).join(' · '))+'">⛓ așteaptă '+odp.length+'</span>';
+  const unl=unlocks(tk.id);if(unl.length)badges+='<span class="badge b-blue" title="'+esc(unl.map(o=>o.title).join(' · '))+'">🔓 deblochează '+unl.length+'</span>';
   let clHtml='';
   if(tk.checklist&&tk.checklist.length){
     const cd=tk.checklist.filter(c=>c.done).length;
@@ -617,15 +659,18 @@ function viewAzi(){
   const t=today();
   const active=S.tasks.filter(x=>x.status==='active');
   const proposedIds=dl(t).proposed;
-  const urgents=sortByPlan(active.filter(x=>(x.type==='urgent'||escalated(x))&&(x.deadline<=t||proposedIds.includes(x.id))));
-  const pinned=sortByPlan(active.filter(x=>proposedIds.includes(x.id)&&!(x.type==='urgent'||escalated(x))));
+  const azi=azToday();
+  const urgents=azi.filter(x=>x.type==='urgent'||escalated(x));
   const doneToday=dl(t).completed;
   const propCount=proposedIds.length, doneOfProposed=doneToday.filter(c=>proposedIds.includes(c.id)).length;
 
   let h='<div class="card" style="padding:9px 14px"><span class="mini">Prioritare: <b style="color:var(--red)">'+urgents.length+'</b> · Alese azi: <b>'+propCount+'</b> · Finalizate: <b style="color:var(--green)">'+doneToday.length+'</b> · Realizare: <b>'+(propCount?Math.round(100*doneOfProposed/propCount):0)+'%</b></span></div>';
-  if(!VIEWALL)h+='<div class="card"><div class="row">'
+  const qaProj=VIEWALL?(ROOT.profiles.find(x=>x.id===(VA_USER||ROOT.active))||ROOT.profiles[0]).data.projects:S.projects;
+  h+='<div class="card"><div class="row">'
+    +(VIEWALL?'<select id="qa-user" onchange="qaUserChanged(this.value)" title="Pentru cine adaug taskul">'
+        +ROOT.profiles.map(p=>'<option value="'+p.id+'"'+(p.id===(VA_USER||ROOT.active)?' selected':'')+'>👤 '+esc(p.name)+'</option>').join('')+'</select>':'')
     +'<input class="grow" id="qa-title" placeholder="Task nou… (Enter pentru adăugare)" onkeydown="if(event.key===\'Enter\')quickAdd()">'
-    +'<select id="qa-proj">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+    +'<select id="qa-proj">'+qaProj.filter(p=>p.status!=='incheiat').map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<select id="qa-type"><option value="normal">Normal ('+(S.cfg.norm?'+'+S.cfg.norm+' zile':'azi')+')</option><option value="urgent">Prioritar ('+S.cfg.urg+' zile lucr.)</option><option value="imbunatatit">De îmbunătățit ('+S.cfg.imb+' zile)</option><option value="waiting">În așteptare (verific în '+S.cfg.wait+' zile lucr.)</option></select>'
     +'<select id="qa-recur"><option value="">fără recurență</option><option value="zi">zilnic</option><option value="sapt">săptămânal</option><option value="luna">lunar</option><option value="trim">trimestrial</option><option value="sem">semestrial</option><option value="an">anual</option></select>'
     +'<input type="date" id="qa-dead" title="Scadență (opțional — dacă o lași goală se aplică termenul implicit al tipului)" style="width:140px">'
@@ -633,8 +678,12 @@ function viewAzi(){
     +'<input id="qa-deleg" placeholder="Delegat către / aștept de la…" style="width:150px">'
     +'<button class="primary" onclick="quickAdd()">Adaugă</button></div>'
     +'<div id="qa-hint"></div></div>';
-  h+=section('🔴 Prioritare — începe cu ele','b-red',urgents,'Nimic prioritar. Respiră.',{reorder:true});
-  h+=section('📌 Alese pentru azi','b-blue',pinned,'Nimic ales încă — deschide „Toate" și alege cu 📌 ce faci azi.',{reorder:true});
+  h+='<div class="card"><div class="sec-title"><h2>🎯 Ziua mea</h2><span class="badge '+(urgents.length?'b-red':'b-blue')+'">'+azi.length+'</span>'
+    +(urgents.length?'<span class="mini">'+urgents.length+' prioritare</span>':'')
+    +(azi.length>1&&!VIEWALL?'<button class="ghost" style="margin-left:auto;padding:4px 10px" onclick="orderPopup()">↕ Ordonează ziua</button>':'')+'</div>'
+    +(azi.length?azi.map(x=>taskRow(x,{reorder:true})).join('')
+      :'<div class="empty">Nimic pentru azi. Prioritarele apar singure la scadență; restul le alegi din „Toate" cu 📌.</div>')
+    +'</div>';
   h+='<div class="card"><details'+(doneToday.length?' open':'')+'><summary>✅ Finalizate azi ('+doneToday.length+')</summary>'
     +(doneToday.length?doneToday.map(c=>'<div class="day-item">✓ '+esc(c.title)+' <span class="mini">· '+esc(proj(c.projectId).name)+'</span></div>').join(''):'<div class="empty">Încă nimic — prima bifă e cea mai grea.</div>')
     +'</details></div>';
@@ -658,12 +707,32 @@ function editTask(id){
     +'<label class="mini">Scadență <input type="date" id="e-dead" value="'+tk.deadline+'"></label>'
     +'<label class="mini">Delegat / aștept de la <input id="e-deleg" value="'+esc(tk.delegatedTo||'')+'" placeholder="—"></label>'
     +'<label class="mini" title="După această dată taskul nu mai apare; la recurente se oprește seria">Expiră la <input type="date" id="e-until" value="'+(tk.until||'')+'"></label></div>'
+    +'<div class="mini" style="margin-bottom:12px">⛓ Depinde de <span class="mini">(nu poate fi închis până nu se închid acestea)</span>'
+    +'<div id="e-deps" style="margin:4px 0">'+depChips(tk)+'</div>'
+    +'<input id="e-dep-add" list="dl-deps" placeholder="Scrie titlul unui task și apasă Enter…" style="width:100%" onkeydown="if(event.key===\'Enter\'){event.preventDefault();depAdd(\''+tk.id+'\');}">'
+    +'<datalist id="dl-deps">'+S.tasks.filter(x=>x.status==='active'&&x.id!==tk.id).map(x=>'<option value="'+esc(x.title)+'">').join('')+'</datalist></div>'
     +'<label class="mini" style="display:block;margin-bottom:14px">Subtaskuri — unul pe rând (taskul se închide doar când toate sunt bifate; șterge rândurile ca să le elimini)'
     +'<textarea id="e-cl" rows="4" placeholder="- subpunct 1&#10;- subpunct 2">'+esc((tk.checklist||[]).map(c=>c.txt).join('\n'))+'</textarea></label>'
     +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button>'
     +'<button class="primary" onclick="saveEdit(\''+tk.id+'\')">Salvează</button></div></div></div>';
   setTimeout(()=>{const e=document.getElementById('e-title');if(e)e.focus();},50);
 }
+function depChips(tk){
+  return (tk.deps||[]).map(d=>{const o=S.tasks.find(x=>x.id===d);if(!o)return '';
+    return '<span class="badge '+(o.status==='active'?'b-amber':'b-green')+'" style="margin:2px 4px 2px 0">'+esc(o.title)+(o.status==='active'?'':' ✓')
+      +' <a href="#" onclick="depRemove(\''+tk.id+'\',\''+d+'\');return false" style="text-decoration:none;color:inherit">✕</a></span>';}).join('')||'<span class="mini">—</span>';
+}
+function depAdd(id){
+  const tk=S.tasks.find(x=>x.id===id);const inp=document.getElementById('e-dep-add');const v=(inp.value||'').trim().toLowerCase();if(!tk||!v)return;
+  const o=S.tasks.find(x=>x.status==='active'&&x.id!==id&&x.title.toLowerCase()===v)||S.tasks.find(x=>x.status==='active'&&x.id!==id&&x.title.toLowerCase().includes(v));
+  if(!o){alert('Nu am găsit un task activ cu acest titlu.');return;}
+  if((o.deps||[]).includes(id)){alert('Dependență circulară: „'+o.title+'” depinde deja de acest task.');return;}
+  tk.deps=tk.deps||[];if(!tk.deps.includes(o.id))tk.deps.push(o.id);
+  inp.value='';document.getElementById('e-deps').innerHTML=depChips(tk);save();
+}
+function depRemove(id,d){const tk=S.tasks.find(x=>x.id===id);if(!tk)return;tk.deps=(tk.deps||[]).filter(x=>x!==d);document.getElementById('e-deps').innerHTML=depChips(tk);save();}
+function openDeps(tk){return (tk.deps||[]).map(d=>S.tasks.find(x=>x.id===d)).filter(o=>o&&o.status==='active');}
+function unlocks(id){return S.tasks.filter(x=>x.status==='active'&&(x.deps||[]).includes(id));}
 function saveEdit(id){
   const tk=S.tasks.find(x=>x.id===id);if(!tk)return;
   const title=document.getElementById('e-title').value.trim();
@@ -692,9 +761,31 @@ function addWaiting(){
   addTask(el.value,document.getElementById('w-proj').value,'waiting',null,null,document.getElementById('w-who').value,false);
   render();
 }
+let VA_USER=null;
+function qaUserChanged(id){
+  VA_USER=id;
+  const pr=ROOT.profiles.find(x=>x.id===id);if(!pr)return;
+  const sel=document.getElementById('qa-proj');
+  if(sel)sel.innerHTML=pr.data.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('');
+}
 function quickAdd(){
   const ti=document.getElementById('qa-title');if(!ti.value.trim())return;
   const title=ti.value.trim();
+  if(VIEWALL){ /* în „Total": taskul merge la utilizatorul ales */
+    const pr=ROOT.profiles.find(x=>x.id===(VA_USER||ROOT.active))||ROOT.profiles[0];
+    const real=S;S=pr.data;
+    try{
+      const qd=document.getElementById('qa-dead').value||null;
+      const ntk=addTask(title,document.getElementById('qa-proj').value,document.getElementById('qa-type').value,qd,
+        document.getElementById('qa-recur').value,document.getElementById('qa-deleg').value,true);
+      if(qd&&ntk.type==='normal')ntk.manualDue=true;
+      const qu=document.getElementById('qa-until').value;if(qu)ntk.until=qu;
+    }finally{S=real;}
+    ti.value='';render();
+    const hint=document.getElementById('qa-hint');
+    if(hint)hint.innerHTML='<div class="hint">✅ Adăugat la <b>'+esc(pr.name)+'</b>.</div>';
+    return;
+  }
   const matches=S.tasks.filter(x=>x.status==='active'&&x.createdAt<today()&&similar(title,x.title)>=0.5);
   const qd=document.getElementById('qa-dead').value||null;
   const ntk=addTask(title,document.getElementById('qa-proj').value,document.getElementById('qa-type').value,qd,
@@ -727,10 +818,15 @@ function viewToate(){
   h+='<div class="card"><div class="sec-title"><h2>'+(SEARCH?'Rezultate căutare':'Toate taskurile — după scadență și prioritate')+'</h2><span class="badge b-gray">'+act.length+'</span></div>'
     +'<p class="mini" style="margin-bottom:8px">📌 = alege pentru lista de azi · 📍 = deja ales. Orice task (în afară de „de îmbunătățit” și „în așteptare”) devine prioritar când scadența e la ≤ 2 zile.</p>'
     +(act.length?act.map(x=>taskRow(x)).join(''):'<div class="empty">'+(SEARCH?'Nimic găsit pentru „'+esc(SEARCH)+'”.':'Niciun task activ.')+'</div>')+'</div>';
+  const blockers=S.tasks.filter(x=>x.status==='active'&&unlocks(x.id).length).sort((a,b)=>unlocks(b.id).length-unlocks(a.id).length);
+  if(blockers.length)h+='<div class="card"><div class="sec-title"><h2>⛓ Lanțuri de dependențe</h2><span class="badge b-gray">'+blockers.length+'</span></div>'
+    +'<p class="mini" style="margin-bottom:8px">Ce se deblochează dacă închizi fiecare task de mai jos. Dependențele se setează din ✏️ pe task.</p>'
+    +blockers.map(b=>'<div class="rev-item"><b>'+esc(b.title)+'</b> <span class="mini">· '+esc(proj(b.projectId).name)+' · '+fmt(b.deadline)+'</span>'
+      +'<div class="mini" style="margin-top:4px">🔓 '+unlocks(b.id).map(u=>esc(u.title)).join(' · ')+'</div></div>').join('')+'</div>';
   if(!VIEWALL)h+='<div class="card"><div class="sec-title"><h2>⏸ Adaugă „în așteptare”</h2></div>'
     +'<div class="row"><input class="grow" id="w-title" placeholder="Aștept răspuns pentru… (Enter)" onkeydown="if(event.key===\'Enter\')addWaiting()">'
     +'<input id="w-who" placeholder="De la cine" style="width:130px">'
-    +'<select id="w-proj">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+    +'<select id="w-proj">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<button class="ghost" onclick="addWaiting()">+ Adaugă</button></div></div>';
   const done=S.tasks.filter(x=>x.status==='done').sort((a,b)=>b.doneAt<a.doneAt?-1:1).slice(0,50);
   h+='<div class="card"><details><summary>Arhivă finalizate ('+done.length+')</summary>'
@@ -838,7 +934,7 @@ function viewCalendar(){
       +selGhost.map(x=>'<div class="day-item" style="opacity:.7">🔁 '+esc(x.title)+' <span class="mini">· '+esc(proj(x.projectId).name)+' · '+RECUR_LABEL[x.recur]+'</span></div>').join('')+'</div>':'')
     +((!sel.length&&!selDone.length&&!selGhost.length)?'<div class="empty">Nimic în această zi.</div>':'')
     +((CAL_SEL<=t&&!VIEWALL)?'<div class="row" style="margin-top:10px"><input class="grow" id="rc-title" placeholder="Am mai făcut în această zi… (Enter)" onkeydown="if(event.key===\'Enter\')addRetro()">'
-      +'<select id="rc-proj">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+      +'<select id="rc-proj">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
       +'<button class="ghost" onclick="addRetro()">✓ Adaugă ca finalizat</button></div>':'')
     +'</div>';
   return h;
@@ -849,6 +945,159 @@ function addRetro(){
   if(CAL_SEL>today())return;
   dl(CAL_SEL).completed.push({id:'r'+Date.now(),title:txt,projectId:document.getElementById('rc-proj').value,type:'normal',retro:true});
   save();render();
+}
+
+/* ---------- mindmap: pune-ți gândurile în ordine ---------- */
+let MM_SEL=null,MM_NODE=null,MM_DRAG=null,MM_ZOOM=1,MM_BOUND=false;
+const MM_COLORS=['#2563eb','#059669','#d97706','#7c3aed','#dc2626','#0891b2','#6b7280'];
+function mmMaps(){if(!S.maps)S.maps=[];return S.maps;}
+function mmCur(){const m=mmMaps();let c=m.find(x=>x.id===(MM_SEL||S.mapSel));if(!c&&m.length)c=m[0];if(c){MM_SEL=c.id;S.mapSel=c.id;}return c||null;}
+function mmNew(name,rootText){
+  const id='m'+Date.now();const map={id,name:name||'Hartă nouă',createdAt:today(),nodes:[{id:'n1',t:rootText||name||'Ideea centrală',x:60,y:300,p:null,c:MM_COLORS[0]}],seq:1};
+  mmMaps().push(map);MM_SEL=id;S.mapSel=id;MM_NODE='n1';return map;
+}
+function mmNid(map){map.seq=(map.seq||map.nodes.length)+1;return 'n'+map.seq;}
+function mmChildren(map,pid){return map.nodes.filter(n=>n.p===pid);}
+function mmAdd(map,pid,text,extra){
+  const par=map.nodes.find(n=>n.id===pid);const sib=mmChildren(map,pid).length;
+  const n=Object.assign({id:mmNid(map),t:text||'',p:pid,x:par?par.x+250:60,y:par?par.y+sib*64:60,c:par?par.c:MM_COLORS[0]},extra||{});
+  map.nodes.push(n);return n;
+}
+function mmDelete(map,id){
+  const kill=new Set([id]);let grew=true;
+  while(grew){grew=false;map.nodes.forEach(n=>{if(n.p&&kill.has(n.p)&&!kill.has(n.id)){kill.add(n.id);grew=true;}});}
+  map.nodes=map.nodes.filter(n=>!kill.has(n.id));
+}
+function mmLayout(map){
+  const kids=id=>mmChildren(map,id);
+  const leaves=id=>{const k=kids(id);return k.length?k.reduce((s,c)=>s+leaves(c.id),0):1;};
+  let y=40;const X=260,Y=64;
+  function place(n,depth){const k=kids(n.id);n.x=40+depth*X;
+    if(!k.length){n.y=y;y+=Y;return;}
+    const y0=y;k.forEach(c=>place(c,depth+1));n.y=Math.round((y0+(y-Y))/2);}
+  const root=map.nodes.find(n=>!n.p);if(root)place(root,0);
+}
+function mmSeedProject(pid){
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const map=mmNew(p.name,p.name);map.nodes[0].c=p.color;
+  S.tasks.filter(t=>t.projectId===pid&&t.status==='active').sort((a,b)=>a.deadline<b.deadline?-1:1).forEach(t=>{
+    const n=mmAdd(map,'n1',t.title,{task:t.id});
+    (t.checklist||[]).forEach(c=>mmAdd(map,n.id,(c.done?'✓ ':'')+c.txt));
+  });
+  mmLayout(map);save();render();
+}
+function mmSeedIdeas(){
+  const map=mmNew('Idei — '+fmt(today()),'💡 Ideile mele');
+  S.ideas.filter(i=>!i.promoted).forEach(i=>{const n=mmAdd(map,'n1',ideaTitle(i),{idea:i.id});
+    ideaBody(i).split('\n').map(l=>l.replace(/^[\s•*\-]+/,'').trim()).filter(Boolean).forEach(l=>mmAdd(map,n.id,l));});
+  mmLayout(map);save();render();
+}
+function mmSeedToday(){
+  const map=mmNew('Ziua '+fmt(today()),'🎯 '+fmt(today()));
+  azToday().forEach(t=>{const n=mmAdd(map,'n1',t.title,{task:t.id});(t.checklist||[]).forEach(c=>mmAdd(map,n.id,(c.done?'✓ ':'')+c.txt));});
+  mmLayout(map);save();render();
+}
+function mmSeedAsk(){
+  document.getElementById('modal-root').innerHTML='<div class="modal-bg" onclick="if(event.target===this)closeEdit()"><div class="modal"><h2>🧠 Hartă din proiect</h2>'
+    +'<div class="sub">Proiectul devine centrul, taskurile deschise ramuri, subtaskurile frunze.</div>'
+    +'<select id="mm-sp" style="width:100%;margin:8px 0 14px">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+    +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button><button class="primary" onclick="const v=document.getElementById(\'mm-sp\').value;document.getElementById(\'modal-root\').innerHTML=\'\';mmSeedProject(v)">Creează</button></div></div></div>';
+}
+function mmNewBlank(){const n=prompt('Numele hărții (sau ideea centrală):','Gânduri '+fmt(today()));if(n===null)return;mmNew(n.trim()||'Hartă nouă');save();render();}
+function mmSelectMap(id){MM_SEL=id;S.mapSel=id;MM_NODE=null;save();render();}
+function mmRename(){const m=mmCur();if(!m)return;const n=prompt('Nume nou:',m.name);if(n&&n.trim()){m.name=n.trim();save();render();}}
+function mmDeleteMap(){const m=mmCur();if(!m)return;if(!confirm('Ștergi harta „'+m.name+'”? Taskurile create din ea rămân.'))return;S.maps=mmMaps().filter(x=>x.id!==m.id);MM_SEL=null;S.mapSel=null;MM_NODE=null;save();render();}
+function mmArrange(){const m=mmCur();if(!m)return;mmLayout(m);save();render();}
+function mmZoom(d){MM_ZOOM=Math.max(.4,Math.min(2,Math.round((MM_ZOOM+d)*10)/10));const c=document.getElementById('mm-canvas');if(c)c.style.transform='scale('+MM_ZOOM+')';const z=document.getElementById('mm-zoom');if(z)z.textContent=Math.round(MM_ZOOM*100)+'%';}
+function mmSelect(id){MM_NODE=id;document.querySelectorAll('.mm-node').forEach(e=>e.classList.toggle('sel',e.getAttribute('data-id')===id));const tb=document.getElementById('mm-tools');if(tb)tb.style.visibility=id?'visible':'hidden';}
+function mmAddChild(){const m=mmCur();if(!m||!MM_NODE)return;const n=mmAdd(m,MM_NODE,'');save();render();setTimeout(()=>{mmSelect(n.id);mmEditNode(n.id);},0);}
+function mmAddSibling(){const m=mmCur();if(!m||!MM_NODE)return;const cur=m.nodes.find(n=>n.id===MM_NODE);if(!cur||!cur.p){mmAddChild();return;}
+  const n=mmAdd(m,cur.p,'');n.x=cur.x;n.y=cur.y+64;n.c=cur.c;save();render();setTimeout(()=>{mmSelect(n.id);mmEditNode(n.id);},0);}
+function mmDelNode(){const m=mmCur();if(!m||!MM_NODE)return;const n=m.nodes.find(x=>x.id===MM_NODE);if(!n)return;
+  if(!n.p){alert('Nodul central nu se șterge — șterge harta din meniu dacă nu-ți mai trebuie.');return;}
+  const k=mmChildren(m,n.id).length;if(k&&!confirm('Ștergi „'+n.t+'” și cele '+k+' ramuri de sub el?'))return;
+  mmDelete(m,n.id);MM_NODE=n.p;save();render();}
+function mmEditNode(id){
+  const m=mmCur();if(!m)return;const n=m.nodes.find(x=>x.id===id);if(!n)return;MM_NODE=id;
+  const t=n.task?S.tasks.find(x=>x.id===n.task):null;
+  document.getElementById('modal-root').innerHTML='<div class="modal-bg" onclick="if(event.target===this)mmCloseEdit()"><div class="modal">'
+    +'<h2>'+(n.p?'Ramură':'Ideea centrală')+'</h2>'
+    +'<textarea id="mm-txt" rows="3" placeholder="Scrie gândul… (Enter = salvează, Shift+Enter = rând nou)" style="margin:10px 0 8px" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();mmSaveNode(\''+id+'\');}">'+esc(n.t)+'</textarea>'
+    +'<div class="row" style="margin-bottom:12px"><span class="mini">Culoare</span>'+MM_COLORS.map(c=>'<span onclick="document.getElementById(\'mm-col\').value=\''+c+'\';this.parentNode.querySelectorAll(\'span[data-c]\').forEach(e=>e.style.outline=\'\');this.style.outline=\'2px solid #111\'" data-c="'+c+'" style="display:inline-block;width:18px;height:18px;border-radius:50%;background:'+c+';cursor:pointer;'+(c===n.c?'outline:2px solid #111':'')+'"></span>').join('')+'<input type="hidden" id="mm-col" value="'+n.c+'"></div>'
+    +(t?'<div class="hint">🔗 Legat de taskul „'+esc(t.title)+'” ('+(t.status==='active'?'deschis':'închis')+') <button class="ghost" style="padding:3px 8px" onclick="document.getElementById(\'modal-root\').innerHTML=\'\';editTask(\''+t.id+'\')">deschide</button></div>'
+      :(n.p?'<details style="margin-bottom:10px"><summary class="mini">→ Transformă în task / idee / proiect</summary><div class="row" style="margin-top:8px">'
+        +'<select id="mm-tp">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+        +'<select id="mm-tt"><option value="normal">Normal</option><option value="urgent">Prioritar</option><option value="imbunatatit">De îmbunătățit</option><option value="waiting">În așteptare</option></select>'
+        +'<button class="ghost" onclick="mmToTask(\''+id+'\')">→ Task (ramurile devin subtaskuri)</button></div>'
+        +'<div class="row" style="margin-top:6px"><button class="ghost" onclick="mmToIdea(\''+id+'\')">→ Idee (ramurile devin buletele)</button><button class="ghost" onclick="mmToProject(\''+id+'\')">→ Proiect nou</button></div></details>':''))
+    +'<div class="row" style="justify-content:space-between"><span>'+(n.p?'<button class="ghost" onclick="mmDelNode();mmCloseEdit()">🗑 Șterge</button>':'')+'</span>'
+    +'<span><button class="ghost" onclick="mmCloseEdit()">Renunță</button> <button class="primary" onclick="mmSaveNode(\''+id+'\')">Salvează</button></span></div></div></div>';
+  setTimeout(()=>{const e=document.getElementById('mm-txt');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},30);
+}
+function mmCloseEdit(){document.getElementById('modal-root').innerHTML='';const m=mmCur();if(m){m.nodes=m.nodes.filter(n=>!n.p||n.t.trim()||mmChildren(m,n.id).length);}render();}
+function mmSaveNode(id){const m=mmCur();if(!m)return;const n=m.nodes.find(x=>x.id===id);if(!n)return;
+  n.t=document.getElementById('mm-txt').value.trim();n.c=document.getElementById('mm-col').value||n.c;
+  if(!n.p&&n.t)m.name=m.name||n.t;save();mmCloseEdit();}
+function mmToTask(id){const m=mmCur();const n=m.nodes.find(x=>x.id===id);if(!n)return;const txt=(document.getElementById('mm-txt').value||n.t).trim();if(!txt){alert('Scrie întâi textul.');return;}
+  const tk=addTask(txt,document.getElementById('mm-tp').value,document.getElementById('mm-tt').value,null,null,null,false);
+  const kids=mmChildren(m,n.id).map(c=>c.t.trim()).filter(Boolean);if(kids.length)tk.checklist=kids.map(x=>({txt:x,done:false}));
+  n.t=txt;n.task=tk.id;save();mmCloseEdit();}
+function mmToIdea(id){const m=mmCur();const n=m.nodes.find(x=>x.id===id);if(!n)return;const txt=(document.getElementById('mm-txt').value||n.t).trim();if(!txt){alert('Scrie întâi textul.');return;}
+  const kids=mmChildren(m,n.id).map(c=>c.t.trim()).filter(Boolean);
+  const idea={id:'i'+Date.now(),text:txt+(kids.length?'\n'+kids.map(k=>'- '+k).join('\n'):''),createdAt:today()};S.ideas.push(idea);n.t=txt;n.idea=idea.id;save();mmCloseEdit();alert('💡 Salvată în Idei.');}
+function mmToProject(id){const m=mmCur();const n=m.nodes.find(x=>x.id===id);if(!n)return;const txt=(document.getElementById('mm-txt').value||n.t).trim();if(!txt){alert('Scrie întâi textul.');return;}
+  if(S.projects.some(p=>p.name.toLowerCase()===txt.toLowerCase())){alert('Există deja un proiect cu acest nume.');return;}
+  S.projects.push({id:'p'+Date.now(),name:txt,color:n.c||COLORS[S.projects.length%COLORS.length],status:'activ',obj:''});n.t=txt;save();mmCloseEdit();alert('📁 Proiect creat: '+txt);}
+function mmDown(ev,id){if(ev.button!==0)return;ev.preventDefault();const m=mmCur();const n=m&&m.nodes.find(x=>x.id===id);if(!n)return;
+  MM_DRAG={id,sx:ev.clientX,sy:ev.clientY,ox:n.x,oy:n.y,moved:false};mmSelect(id);}
+function mmBind(){
+  if(MM_BOUND)return;MM_BOUND=true;
+  document.addEventListener('mousemove',ev=>{if(!MM_DRAG)return;const m=mmCur();const n=m&&m.nodes.find(x=>x.id===MM_DRAG.id);if(!n)return;
+    const dx=(ev.clientX-MM_DRAG.sx)/MM_ZOOM,dy=(ev.clientY-MM_DRAG.sy)/MM_ZOOM;if(Math.abs(dx)+Math.abs(dy)>3)MM_DRAG.moved=true;
+    n.x=Math.max(0,Math.round(MM_DRAG.ox+dx));n.y=Math.max(0,Math.round(MM_DRAG.oy+dy));
+    const el=document.querySelector('.mm-node[data-id="'+n.id+'"]');if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}mmDrawEdges();});
+  document.addEventListener('mouseup',()=>{if(!MM_DRAG)return;const moved=MM_DRAG.moved;MM_DRAG=null;if(moved)save();});
+  document.addEventListener('keydown',ev=>{
+    if(TAB!=='mindmap'||VIEWALL)return;const tg=(ev.target&&ev.target.tagName||'').toLowerCase();
+    if(tg==='input'||tg==='textarea'||tg==='select'||document.getElementById('modal-root').innerHTML)return;
+    if(!MM_NODE)return;
+    if(ev.key==='Tab'){ev.preventDefault();mmAddChild();}
+    else if(ev.key==='Enter'){ev.preventDefault();mmAddSibling();}
+    else if(ev.key==='Delete'||ev.key==='Backspace'){ev.preventDefault();mmDelNode();}
+    else if(ev.key==='F2'||ev.key===' '){ev.preventDefault();mmEditNode(MM_NODE);}
+    else if(ev.key==='Escape'){mmSelect(null);}
+  });
+}
+function mmDrawEdges(){
+  const m=mmCur();const svg=document.getElementById('mm-svg');if(!m||!svg)return;let d='';
+  m.nodes.forEach(n=>{if(!n.p)return;const a=document.querySelector('.mm-node[data-id="'+n.p+'"]'),b=document.querySelector('.mm-node[data-id="'+n.id+'"]');if(!a||!b)return;
+    const x1=a.offsetLeft+a.offsetWidth,y1=a.offsetTop+a.offsetHeight/2,x2=b.offsetLeft,y2=b.offsetTop+b.offsetHeight/2,mx=(x1+x2)/2;
+    d+='<path d="M'+x1+' '+y1+' C'+mx+' '+y1+','+mx+' '+y2+','+x2+' '+y2+'" stroke="'+(n.c||'#94a3b8')+'" stroke-width="2" fill="none" opacity=".7"/>';});
+  svg.innerHTML=d;
+}
+function mmAfterRender(){mmBind();mmDrawEdges();if(MM_NODE)mmSelect(MM_NODE);const c=document.getElementById('mm-canvas');if(c)c.style.transform='scale('+MM_ZOOM+')';}
+function viewMindmap(){
+  if(VIEWALL)return '<div class="card"><div class="empty">Hărțile sunt per utilizator — comută pe un utilizator din selector.</div></div>';
+  const maps=mmMaps();const m=mmCur();
+  const seedBtns='<button class="ghost" onclick="mmNewBlank()">＋ Hartă goală</button><button class="ghost" onclick="mmSeedAsk()">Din proiect…</button><button class="ghost" onclick="mmSeedIdeas()">Din Idei</button><button class="ghost" onclick="mmSeedToday()">Din ziua de azi</button>';
+  if(!m)return '<div class="card"><h2>🧠 Mindmap</h2><p class="mini" style="margin:6px 0 12px">Un loc în care îți așezi gândurile înainte să devină taskuri. Pornești de la o foaie goală sau de la ce ai deja — un proiect, ideile parcate, ziua de azi — și rearanjezi până se limpezește. Orice ramură devine, cu un click, task, idee sau proiect.</p>'
+    +'<div class="row">'+seedBtns+'</div><p class="mini" style="margin-top:12px">Pe hartă: <b>Tab</b> = ramură nouă sub nodul selectat · <b>Enter</b> = ramură alături · <b>dublu-click / Space</b> = editează · <b>Del</b> = șterge · <b>trage</b> cu mouse-ul ca să rearanjezi · „Aranjează" pune totul la loc.</p></div>';
+  const W=Math.max(1400,...m.nodes.map(n=>n.x+320)),H=Math.max(700,...m.nodes.map(n=>n.y+120));
+  let h='<div class="card" style="padding:9px 12px"><div class="row" style="justify-content:space-between">'
+    +'<span><select onchange="mmSelectMap(this.value)">'+maps.map(x=>'<option value="'+x.id+'"'+(x.id===m.id?' selected':'')+'>🧠 '+esc(x.name)+'</option>').join('')+'</select> '
+    +'<button class="icon-btn" title="Redenumește" onclick="mmRename()">✏️</button><button class="icon-btn" title="Șterge harta" onclick="mmDeleteMap()">🗑</button></span>'
+    +'<span>'+seedBtns+'</span>'
+    +'<span><button class="ghost" onclick="mmArrange()">✨ Aranjează</button> <button class="ghost" onclick="mmZoom(-.1)">−</button> <span id="mm-zoom" class="mini">'+Math.round(MM_ZOOM*100)+'%</span> <button class="ghost" onclick="mmZoom(.1)">+</button></span></div>'
+    +'<div id="mm-tools" class="row" style="margin-top:8px;visibility:'+(MM_NODE?'visible':'hidden')+'"><span class="mini">Nod selectat:</span>'
+    +'<button class="ghost" onclick="mmAddChild()">＋ ramură (Tab)</button><button class="ghost" onclick="mmAddSibling()">＋ alături (Enter)</button>'
+    +'<button class="ghost" onclick="mmEditNode(MM_NODE)">✏️ editează / transformă</button><button class="ghost" onclick="mmDelNode()">🗑 șterge (Del)</button></div></div>';
+  h+='<div id="mm-wrap" onmousedown="if(event.target===this||event.target.id===\'mm-canvas\'||event.target.id===\'mm-svg\')mmSelect(null)">'
+    +'<div id="mm-canvas" style="width:'+W+'px;height:'+H+'px;transform:scale('+MM_ZOOM+')"><svg id="mm-svg" width="'+W+'" height="'+H+'"></svg>'
+    +m.nodes.map(n=>'<div class="mm-node'+(n.p?'':' root')+(n.id===MM_NODE?' sel':'')+'" data-id="'+n.id+'" style="left:'+n.x+'px;top:'+n.y+'px;border-color:'+(n.c||'#94a3b8')+'" onmousedown="mmDown(event,\''+n.id+'\')" ondblclick="mmEditNode(\''+n.id+'\')">'
+      +esc(n.t||'…')+(n.task?' <span class="mini" title="Legat de un task">🔗</span>':'')+(n.idea?' <span class="mini">💡</span>':'')+'</div>').join('')
+    +'</div></div>'
+    +'<p class="mini" style="margin-top:6px">Tab = ramură · Enter = alături · dublu-click / Space = editează · Del = șterge · trage nodurile ca să rearanjezi · click pe fundal = deselectează.</p>';
+  return h;
 }
 
 /* ---------- banc de idei ---------- */
@@ -872,7 +1121,7 @@ function ideaRow(i){
     +(body?'<div class="idea-body">'+esc(body)+'</div>':'')
     +'<div class="t-meta" style="margin-top:6px"><span class="mini">adăugată '+fmt(i.createdAt)+(i.updatedAt?' · modificată '+fmt(i.updatedAt):'')+'</span></div>'
     +(VIEWALL?'</div></div>':'<div class="row" style="margin-top:6px">'
-    +'<select id="ip-'+i.id+'">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+    +'<select id="ip-'+i.id+'">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<select id="it-'+i.id+'"><option value="imbunatatit">De îmbunătățit (30 zile)</option><option value="normal">Normal (azi)</option><option value="urgent">Prioritar (2 zile lucr.)</option></select>'
     +'<button class="ghost" onclick="promoteIdea(\''+i.id+'\')">→ Fă-o task</button></div></div>'
     +'<div><button class="icon-btn" title="Editează ideea" onclick="editIdea(\''+i.id+'\')">✏️</button>'
@@ -911,15 +1160,35 @@ function deleteIdea(id){
   S.ideas=S.ideas.filter(x=>x.id!==id);save();render();
 }
 
+const PSTAT={activ:['Activ','b-green'],asteptare:['În așteptare','b-amber'],incheiat:['Încheiat','b-gray']};
+function projCard(p){
+  const st=projStats(p.id);const ts=S.tasks.filter(x=>x.projectId===p.id&&x.status==='active').sort((a,b)=>a.deadline<b.deadline?-1:1);
+  const ps=PSTAT[p.status||'activ']||PSTAT.activ;
+  return '<div class="card"><div class="sec-title"><span class="proj-dot" style="background:'+p.color+'"></span><h2>'+esc(p.name)+'</h2>'
+    +'<span class="badge '+ps[1]+'">'+ps[0]+'</span><span class="badge b-gray">'+st.active+' deschise · '+st.done+' închise</span>'
+    +(st.over?'<span class="badge b-red">'+st.over+' depășite</span>':'')
+    +(VIEWALL?'':'<button class="icon-btn" style="margin-left:auto" title="Obiectiv, stadiu, nume" onclick="editProject(\''+p.id+'\')">✏️</button>')+'</div>'
+    +(p.obj?'<div class="mini" style="margin:-4px 0 8px">🎯 '+esc(p.obj)+'</div>':(VIEWALL?'':'<div class="mini" style="margin:-4px 0 8px;font-style:italic">Fără obiectiv — apasă ✏️ și scrie într-o frază unde vrei să ajungi.</div>'))
+    +'<div class="tbar" style="margin:0 0 4px"><div style="width:'+st.pct+'%"></div></div><div class="mini" style="margin-bottom:8px">'+st.pct+'% realizat ('+st.done+'/'+st.total+')</div>'
+    +(ts.length?ts.map(x=>taskRow(x)).join(''):'<div class="empty">Niciun task deschis.</div>')+'</div>';
+}
 function viewProiecte(){
-  let h='';
-  for(const p of S.projects){
-    const ts=S.tasks.filter(x=>x.projectId===p.id&&x.status==='active').sort((a,b)=>a.deadline<b.deadline?-1:1);
-    h+='<div class="card"><div class="sec-title"><span class="proj-dot" style="background:'+p.color+'"></span><h2>'+esc(p.name)+'</h2><span class="badge b-gray">'+ts.length+'</span></div>'
-      +(ts.length?ts.map(x=>taskRow(x)).join(''):'<div class="empty">Niciun task activ.</div>')+'</div>';
-  }
+  const open=S.projects.filter(p=>p.status!=='incheiat'),closed=S.projects.filter(p=>p.status==='incheiat');
+  let h=open.map(projCard).join('');
+  if(closed.length)h+='<div class="card"><details><summary>Proiecte încheiate ('+closed.length+')</summary>'+closed.map(projCard).join('')+'</details></div>';
   return h;
 }
+function editProject(id){
+  const p=S.projects.find(x=>x.id===id);if(!p)return;
+  document.getElementById('modal-root').innerHTML='<div class="modal-bg" onclick="if(event.target===this)closeEdit()"><div class="modal"><h2>✏️ Proiect</h2>'
+    +'<label class="mini" style="display:block;margin:12px 0 8px">Nume<input id="ep-name" style="width:100%" value="'+esc(p.name)+'"></label>'
+    +'<label class="mini" style="display:block;margin-bottom:8px">Obiectiv — o frază: ce înseamnă „gata”?<textarea id="ep-obj" rows="2">'+esc(p.obj||'')+'</textarea></label>'
+    +'<label class="mini" style="display:block;margin-bottom:14px">Stadiu<select id="ep-st" style="width:100%">'+Object.keys(PSTAT).map(k=>'<option value="'+k+'"'+(k===(p.status||'activ')?' selected':'')+'>'+PSTAT[k][0]+'</option>').join('')+'</select></label>'
+    +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button><button class="primary" onclick="saveProject(\''+p.id+'\')">Salvează</button></div></div></div>';
+}
+function saveProject(id){const p=S.projects.find(x=>x.id===id);if(!p)return;
+  const n=document.getElementById('ep-name').value.trim();if(n)p.name=n;
+  p.obj=document.getElementById('ep-obj').value.trim();p.status=document.getElementById('ep-st').value;save();closeEdit();}
 
 function weekDates(){const r=[];for(let i=6;i>=0;i--)r.push(addDays(today(),-i));return r;}
 function viewRapoarte(){
@@ -932,6 +1201,11 @@ function viewRapoarte(){
     +'<p style="margin:6px 0">Propuse: <b>'+propIds.length+'</b> · Finalizate (total): <b>'+comp.length+'</b> · Realizare din propuse: <b>'+pct+'%</b></p>'
     +(comp.length?comp.map(c=>'<div class="day-item">✓ '+esc(c.title)+'</div>').join(''):'<div class="empty">Nimic finalizat încă azi.</div>')
     +'<div style="margin-top:10px"><button class="ghost" onclick="copyReport()">📋 Copiază raportul (pt. email)</button> '+(VIEWALL?'':'<button class="ghost" onclick="startReviewManual()">🧹 Pornește revizuirea săptămânală</button> ')+'<span id="copy-ok" class="mini"></span></div></div>';
+  const alog=(S.autoLog||[]).slice().reverse();
+  h+='<div class="card"><details><summary>🔄 Jurnal modificări automate ('+alog.length+')</summary>'
+    +'<p class="mini" style="margin:6px 0">Ce a reprogramat sistemul singur (recurente, reportări, prelungiri, ștergeri după 3 amânări). Nu te mai întrerupe pe ecranul „Azi" — îl consulți doar când vrei.</p>'
+    +(alog.length?alog.slice(0,60).map(x=>'<div class="day-item mini">'+fmt(x.d)+' — '+x.t+'</div>').join(''):'<div class="empty">Nimic deocamdată.</div>')
+    +'</details></div>';
   // weekly per project
   const wk=weekDates();
   h+='<div class="card"><h2>📊 Săptămâna (ultimele 7 zile) — pe proiecte</h2><table><tr><th>Proiect</th><th>Finalizate</th><th>Active</th><th>Depășite</th><th>Amânări</th><th>Șterse</th></tr>';
@@ -1008,6 +1282,13 @@ function viewSetari(){
     +'<p class="mini" style="margin-top:8px"><b>Pe un calculator nou:</b> deschide HTML-ul → „Conectează fișier existent” → alege taskflow-date.json din pCloud → datele apar imediat. „Creează fișier nou” folosește-l doar prima dată, când fișierul nu există încă.</p>'
     +'<label class="mini" style="display:block;margin-top:10px"><input type="checkbox" '+(ROOT.autoBk!==0?'checked':'')+' onchange="ROOT.autoBk=this.checked?1:0;save()"> <b>Backup automat zilnic</b> — la prima deschidere din zi se descarcă automat o copie completă a datelor (taskflow-backup-DATA.json). Sfat: setează folderul de descărcări al browserului pe un folder pCloud și backupul ajunge direct în cloud, indiferent de sincronizarea prin fișier.</label>'
     +'<p class="mini" style="margin-top:8px">Notă: nu lucra simultan pe două PC-uri — ultimul care salvează câștigă.</p></div>';
+  h+='<div class="card"><h2>📘 Cum actualizez aplicația</h2><ol class="mini" style="padding-left:18px;line-height:1.7">'
+    +'<li><b>Fișier nou de la Claude</b> → redenumește-l <b>index.html</b>.</li>'
+    +'<li>github.com → repository-ul <b>Taskflow</b> → <b>Add file → Upload files</b> → trage index.html → <b>Commit changes</b> (înlocuiește automat versiunea veche).</li>'
+    +'<li>După 1-2 minute: pe fiecare dispozitiv <b>Ctrl+F5</b> (pe telefon: reîncarcă pagina). Datele nu sunt atinse — stau în cloud, separat de cod.</li>'
+    +'<li><b>Dispozitiv nou:</b> deschide adresa aplicației → Setări → lipește token-ul GitHub → Conectează. Abia apoi orice import.</li>'
+    +'<li><b>Regula de aur:</b> nu importa și nu conecta fișiere înainte de token — altfel suprascrii cloud-ul cu date goale.</li>'
+    +'<li>Pentru modificări noi: conversație nouă cu Claude, atașezi <b>index.html</b> + <b>MEMORIE_TASKFLOW.md</b> și spui ce vrei.</li></ol></div>';
   h+='<div class="card"><h2>Date & backup</h2><p class="mini" style="margin-bottom:10px">Export/import manual — util ca backup suplimentar sau dacă browserul nu suportă sincronizarea prin fișier.</p>'
     +'<div class="row"><button class="ghost" onclick="exportData()">⬇️ Export JSON</button>'
     +'<label class="ghost" style="cursor:pointer">⬆️ Import JSON<input type="file" accept=".json" style="display:none" onchange="importData(this)"></label></div></div>';
@@ -1047,7 +1328,7 @@ function showMorning(){
     +'<div class="sub">Scrie intențiile zilei. Apoi îți arăt lista din urmă.</div>';
   if(urg.length)h+='<div class="notif warn"><b>'+urg.length+' prioritare</b> te așteaptă deja — apar primele în listă.</div>';
   h+='<div class="row" style="margin-bottom:8px"><input class="grow" id="m-title" placeholder="Îmi propun să…" onkeydown="if(event.key===\'Enter\')morningAdd()">'
-    +'<select id="m-proj">'+S.projects.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
+    +'<select id="m-proj">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<select id="m-type"><option value="normal">Normal (azi)</option><option value="urgent">Prioritar</option><option value="imbunatatit">De îmbunătățit</option><option value="waiting">În așteptare</option></select>'
     +'<button class="ghost" onclick="morningAdd()">+</button></div>'
     +'<div id="m-list"></div><div id="m-hint"></div>'
@@ -1153,12 +1434,13 @@ function render(){
     try{
       v.innerHTML='<div class="notif" style="margin-bottom:10px">👥 <b>Total</b> — vezi toți utilizatorii împreună, doar citire. Pentru acțiuni comută pe un utilizator din selector.</div>'
         +(TAB==='setari'?'<div class="card"><div class="empty">Setările sunt per utilizator — comută pe un utilizator din selector.</div></div>'
-        :TAB==='azi'?viewAzi():TAB==='calendar'?viewCalendar():TAB==='toate'?viewToate():TAB==='proiecte'?viewProiecte():TAB==='idei'?viewIdei():viewRapoarte());
+        :TAB==='azi'?viewAzi():TAB==='calendar'?viewCalendar():TAB==='toate'?viewToate():TAB==='proiecte'?viewProiecte():TAB==='mindmap'?viewMindmap():TAB==='idei'?viewIdei():viewRapoarte());
     }finally{S=real;}
   }
-  else v.innerHTML=TAB==='azi'?viewAzi():TAB==='calendar'?viewCalendar():TAB==='toate'?viewToate():TAB==='proiecte'?viewProiecte():TAB==='idei'?viewIdei():TAB==='rapoarte'?viewRapoarte():viewSetari();
-  document.getElementById('notifs').innerHTML=VIEWALL?'':bootNotifs.map(n=>'<div class="notif'+(n.warn?' warn':'')+'">'+n.txt+'</div>').join('');
+  else v.innerHTML=TAB==='azi'?viewAzi():TAB==='calendar'?viewCalendar():TAB==='toate'?viewToate():TAB==='proiecte'?viewProiecte():TAB==='mindmap'?viewMindmap():TAB==='idei'?viewIdei():TAB==='rapoarte'?viewRapoarte():viewSetari();
+  document.getElementById('notifs').innerHTML='';
   renderStorageBar();
+  if(TAB==='mindmap'&&!VIEWALL)setTimeout(mmAfterRender,0);
   const pb=document.getElementById('prof-box');
   if(pb&&ROOT)pb.innerHTML='<select onchange="switchProfile(this.value)" style="padding:4px 8px;font-size:13px;margin-left:8px">'
     +ROOT.profiles.map(p=>'<option value="'+p.id+'"'+(p.id===ROOT.active&&!VIEWALL?' selected':'')+'>👤 '+esc(p.name)+'</option>').join('')
