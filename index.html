@@ -477,7 +477,7 @@ function mergedData(){
   const m={projects:[],tasks:[],ideas:[],deletedLog:[],dayLog:{},cfg:(S&&S.cfg)||{urg:2,norm:0,imb:30,wait:5},lastOpen:null,nextId:1};
   for(const pr of ROOT.profiles){
     for(const p of pr.data.projects)m.projects.push({id:pr.id+'§'+p.id,name:pr.name+' · '+p.name,color:p.color});
-    for(const x of pr.data.tasks)m.tasks.push(Object.assign({},x,{id:pr.id+'§'+x.id,projectId:pr.id+'§'+x.projectId}));
+    for(const x of pr.data.tasks)m.tasks.push(Object.assign({},x,{id:pr.id+'§'+x.id,projectId:pr.id+'§'+x.projectId,deps:(x.deps||[]).map(d=>pr.id+'§'+d)}));
     for(const i of pr.data.ideas||[])m.ideas.push(Object.assign({},i,{id:pr.id+'§'+i.id}));
     for(const g of pr.data.deletedLog||[])m.deletedLog.push(Object.assign({},g,{projectId:pr.id+'§'+g.projectId}));
     for(const d of Object.keys(pr.data.dayLog||{})){
@@ -553,8 +553,11 @@ function addTask(title,projectId,type,deadline,recur,delegatedTo,proposedToday){
   if(proposedToday)dl(t).proposed.push(tk.id);
   save();return tk;
 }
-function togglePropose(id){if(VIEWALL)return;const p=dl(today()).proposed;const i=p.indexOf(id);if(i>=0)p.splice(i,1);else p.push(id);save();render();}
-function azOrder(){const d=dl(today());if(!d.order)d.order=[];return d.order;}
+function togglePropose(id){const p=dl(today()).proposed;const i=p.indexOf(id);if(i>=0)p.splice(i,1);else p.push(id);save();render();}
+function azOrder(){if(VIEWALL){ROOT.totalOrder=ROOT.totalOrder||{};const t=today();return ROOT.totalOrder[t]=ROOT.totalOrder[t]||[];}const d=dl(today());if(!d.order)d.order=[];return d.order;}
+function setOrder(ids){if(VIEWALL){ROOT.totalOrder=ROOT.totalOrder||{};ROOT.totalOrder[today()]=ids;}else dl(today()).order=ids;}
+/* rulează fn cu S = datele combinate (în Total) */
+function M(fn){if(!VIEWALL)return fn();const real=S;S=mergedData();try{return fn();}finally{S=real;}}
 function sortByPlan(arr){
   const o=azOrder();
   const rk=x=>(x.type==='urgent'||escalated(x))?0:1;
@@ -576,7 +579,7 @@ function azToday(){
     ||(pid.includes(x.id)&&!(x.type==='urgent'||escalated(x)))
   ));
 }
-function orderPopup(){
+function orderPopup(){return M(()=>{
   const list=azToday();if(!list.length)return;
   const rows=list.map((x,i)=>'<div class="rev-item" draggable="true" data-id="'+x.id+'" ondragstart="ordDrag(event)" ondragover="event.preventDefault()" ondrop="ordDrop(event,\''+x.id+'\')" style="display:flex;align-items:center;gap:10px;cursor:grab;padding:6px 10px">'
     +'<select onchange="ordSet(\''+x.id+'\',this.value)" title="Poziția">'+list.map((_,j)=>'<option value="'+j+'"'+(j===i?' selected':'')+'>'+(j+1)+'</option>').join('')+'</select>'
@@ -585,21 +588,21 @@ function orderPopup(){
   document.getElementById('modal-root').innerHTML='<div class="modal-bg" onclick="if(event.target===this)closeEdit()"><div class="modal" style="max-width:600px"><h2>↕ Ordinea zilei</h2>'
     +'<div class="sub">Alege poziția din listă sau trage rândurile cu mouse-ul. Ordinea se salvează pe loc.</div><div id="ord-list">'+rows+'</div>'
     +'<div class="row" style="margin-top:12px;justify-content:flex-end"><button class="primary" onclick="closeEdit()">Gata</button></div></div></div>';
-}
+});}
 let ORD_DRAG=null;
 function ordDrag(ev){ORD_DRAG=ev.currentTarget.getAttribute('data-id');ev.dataTransfer.effectAllowed='move';}
-function ordDrop(ev,targetId){ev.preventDefault();const from=ORD_DRAG;ORD_DRAG=null;if(!from||from===targetId)return;
+function ordDrop(ev,targetId){ev.preventDefault();const from=ORD_DRAG;ORD_DRAG=null;if(!from||from===targetId)return;M(()=>{
   const ids=azToday().map(x=>x.id);const i=ids.indexOf(from),j=ids.indexOf(targetId);if(i<0||j<0)return;
-  ids.splice(i,1);ids.splice(j,0,from);dl(today()).order=ids;save();orderPopup();}
-function ordSet(id,pos){const ids=azToday().map(x=>x.id);const i=ids.indexOf(id);if(i<0)return;ids.splice(i,1);ids.splice(+pos,0,id);dl(today()).order=ids;save();orderPopup();}
-function moveTask(id,dir){
+  ids.splice(i,1);ids.splice(j,0,from);setOrder(ids);save();orderPopup();});}
+function ordSet(id,pos){M(()=>{const ids=azToday().map(x=>x.id);const i=ids.indexOf(id);if(i<0)return;ids.splice(i,1);ids.splice(+pos,0,id);setOrder(ids);save();orderPopup();});}
+function moveTask(id,dir){M(()=>{
   const list=azToday();
   const i=list.findIndex(x=>x.id===id);const j=i+dir;
   if(i<0||j<0||j>=list.length)return;
   const ids=list.map(x=>x.id);ids.splice(i,1);ids.splice(j,0,id);
-  dl(today()).order=ids;
+  setOrder(ids);
   save();render();
-}
+});}
 
 /* ---------- rendering helpers ---------- */
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -634,11 +637,11 @@ function taskRow(tk,opts){
     clHtml='<div style="margin-top:5px">'+tk.checklist.map((c,ix)=>'<div class="cl-item'+(c.done?' done':'')+'" onclick="toggleCheck(\''+tk.id+'\','+ix+')">'+(c.done?'☑':'☐')+' <span>'+esc(c.txt)+'</span></div>').join('')+'</div>';
   }
   return '<div class="task'+(tk.alert?' alerted':'')+'">'
-    +(VIEWALL?'<div class="chk" style="cursor:default"></div>':'<div class="chk" title="Finalizează" onclick="completeTask(\''+tk.id+'\')"></div>')
+    +'<div class="chk" title="Finalizează" onclick="completeTask(\''+tk.id+'\')"></div>'
     +'<div class="t-body"><div class="t-title">'+esc(tk.title)+'</div>'
     +'<div class="t-meta"><span><span class="proj-dot" style="background:'+p.color+'"></span>'+esc(p.name)+'</span>'
     +dueLabel(tk)+badges+'</div>'+clHtml+'</div>'
-    +(VIEWALL?'':'<div>'
+    +('<div>'
     +(opts.reorder?'<button class="icon-btn" title="Mai sus" onclick="moveTask(\''+tk.id+'\',-1)">▲</button><button class="icon-btn" title="Mai jos" onclick="moveTask(\''+tk.id+'\',1)">▼</button>':'')
     +'<button class="icon-btn" title="Editează" onclick="editTask(\''+tk.id+'\')">✏️</button>'
     +'<button class="icon-btn" title="'+(pinnedNow?'Scoate din lista de azi':'Alege pentru azi')+'" onclick="togglePropose(\''+tk.id+'\')">'+(pinnedNow?'📍':'📌')+'</button>'
@@ -680,7 +683,7 @@ function viewAzi(){
     +'<div id="qa-hint"></div></div>';
   h+='<div class="card"><div class="sec-title"><h2>🎯 Ziua mea</h2><span class="badge '+(urgents.length?'b-red':'b-blue')+'">'+azi.length+'</span>'
     +(urgents.length?'<span class="mini">'+urgents.length+' prioritare</span>':'')
-    +(azi.length>1&&!VIEWALL?'<button class="ghost" style="margin-left:auto;padding:4px 10px" onclick="orderPopup()">↕ Ordonează ziua</button>':'')+'</div>'
+    +(azi.length>1?'<button class="ghost" style="margin-left:auto;padding:4px 10px" onclick="orderPopup()">↕ Ordonează ziua</button>':'')+'</div>'
     +(azi.length?azi.map(x=>taskRow(x,{reorder:true})).join('')
       :'<div class="empty">Nimic pentru azi. Prioritarele apar singure la scadență; restul le alegi din „Toate" cu 📌.</div>')
     +'</div>';
@@ -709,18 +712,18 @@ function editTask(id){
     +'<label class="mini" title="După această dată taskul nu mai apare; la recurente se oprește seria">Expiră la <input type="date" id="e-until" value="'+(tk.until||'')+'"></label></div>'
     +'<div class="mini" style="margin-bottom:12px">⛓ Depinde de <span class="mini">(nu poate fi închis până nu se închid acestea)</span>'
     +'<div id="e-deps" style="margin:4px 0">'+depChips(tk)+'</div>'
-    +'<input id="e-dep-add" list="dl-deps" placeholder="Scrie titlul unui task și apasă Enter…" style="width:100%" onkeydown="if(event.key===\'Enter\'){event.preventDefault();depAdd(\''+tk.id+'\');}">'
+    +'<input id="e-dep-add" list="dl-deps" placeholder="Scrie titlul unui task și apasă Enter…" style="width:100%" onkeydown="if(event.key===\'Enter\'){event.preventDefault();depAdd(\''+aid(tk.id)+'\');}">'
     +'<datalist id="dl-deps">'+S.tasks.filter(x=>x.status==='active'&&x.id!==tk.id).map(x=>'<option value="'+esc(x.title)+'">').join('')+'</datalist></div>'
     +'<label class="mini" style="display:block;margin-bottom:14px">Subtaskuri — unul pe rând (taskul se închide doar când toate sunt bifate; șterge rândurile ca să le elimini)'
     +'<textarea id="e-cl" rows="4" placeholder="- subpunct 1&#10;- subpunct 2">'+esc((tk.checklist||[]).map(c=>c.txt).join('\n'))+'</textarea></label>'
     +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button>'
-    +'<button class="primary" onclick="saveEdit(\''+tk.id+'\')">Salvează</button></div></div></div>';
+    +'<button class="primary" onclick="saveEdit(\''+aid(tk.id)+'\')">Salvează</button></div></div></div>';
   setTimeout(()=>{const e=document.getElementById('e-title');if(e)e.focus();},50);
 }
 function depChips(tk){
   return (tk.deps||[]).map(d=>{const o=S.tasks.find(x=>x.id===d);if(!o)return '';
     return '<span class="badge '+(o.status==='active'?'b-amber':'b-green')+'" style="margin:2px 4px 2px 0">'+esc(o.title)+(o.status==='active'?'':' ✓')
-      +' <a href="#" onclick="depRemove(\''+tk.id+'\',\''+d+'\');return false" style="text-decoration:none;color:inherit">✕</a></span>';}).join('')||'<span class="mini">—</span>';
+      +' <a href="#" onclick="depRemove(\''+aid(tk.id)+'\',\''+d+'\');return false" style="text-decoration:none;color:inherit">✕</a></span>';}).join('')||'<span class="mini">—</span>';
 }
 function depAdd(id){
   const tk=S.tasks.find(x=>x.id===id);const inp=document.getElementById('e-dep-add');const v=(inp.value||'').trim().toLowerCase();if(!tk||!v)return;
@@ -758,7 +761,8 @@ function saveEdit(id){
 function closeEdit(){document.getElementById('modal-root').innerHTML='';render();}
 function addWaiting(){
   const el=document.getElementById('w-title');if(!el.value.trim())return;
-  addTask(el.value,document.getElementById('w-proj').value,'waiting',null,null,document.getElementById('w-who').value,false);
+  const pid=document.getElementById('w-proj').value,who=document.getElementById('w-who').value,title=el.value;
+  withProjOwner(pid,(realPid)=>{addTask(title,realPid,'waiting',null,null,who,false);});
   render();
 }
 let VA_USER=null;
@@ -823,7 +827,7 @@ function viewToate(){
     +'<p class="mini" style="margin-bottom:8px">Ce se deblochează dacă închizi fiecare task de mai jos. Dependențele se setează din ✏️ pe task.</p>'
     +blockers.map(b=>'<div class="rev-item"><b>'+esc(b.title)+'</b> <span class="mini">· '+esc(proj(b.projectId).name)+' · '+fmt(b.deadline)+'</span>'
       +'<div class="mini" style="margin-top:4px">🔓 '+unlocks(b.id).map(u=>esc(u.title)).join(' · ')+'</div></div>').join('')+'</div>';
-  if(!VIEWALL)h+='<div class="card"><div class="sec-title"><h2>⏸ Adaugă „în așteptare”</h2></div>'
+  h+='<div class="card"><div class="sec-title"><h2>⏸ Adaugă „în așteptare”</h2></div>'
     +'<div class="row"><input class="grow" id="w-title" placeholder="Aștept răspuns pentru… (Enter)" onkeydown="if(event.key===\'Enter\')addWaiting()">'
     +'<input id="w-who" placeholder="De la cine" style="width:130px">'
     +'<select id="w-proj">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
@@ -845,6 +849,9 @@ function dragTask(ev,id){DRAG=id;ev.dataTransfer.effectAllowed='move';try{ev.dat
 function dropTask(ev,iso){
   ev.preventDefault();ev.stopPropagation();
   const id=DRAG||(ev.dataTransfer?ev.dataTransfer.getData('text/plain'):null);DRAG=null;
+  dropApply(id,iso);
+}
+function dropApply(id,iso){
   const tk=S.tasks.find(x=>x.id===id);if(!tk)return;
   if(iso<today()){alert('Nu poți muta un task pe o zi din trecut.');return;}
   if(iso===tk.deadline)return;
@@ -875,7 +882,7 @@ function viewWeek(){
   for(let i=0;i<5;i++){
     const iso=days[i];const ts=(byDate[iso]||[]);const ds=(doneBy[iso]||[]);
     h+='<div class="wk-col'+(iso===t?' today':'')+'" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')"><div class="wk-h">'+names[i]+'<br><span class="mini">'+fmt(iso)+'</span></div>'
-      +ts.map(x=>'<div class="wk-item '+((x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue')+'"'+(VIEWALL?'':' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab" title="Click = editare · Trage = mută scadența" onclick="editTask(\''+x.id+'\')"')+'>'+esc(x.title)+'</div>').join('')
+      +ts.map(x=>'<div class="wk-item '+((x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue')+'"'+(' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab" title="Click = editare · Trage = mută scadența" onclick="editTask(\''+x.id+'\')"')+'>'+esc(x.title)+'</div>').join('')
       +ds.map(c=>'<div class="wk-item c-green">✓ '+esc(c.title)+'</div>').join('')
       +(ghostBy[iso]||[]).map(x=>'<div class="wk-item c-blue ghost" title="Repetare programată — '+RECUR_LABEL[x.recur]+'">🔁 '+esc(x.title)+'</div>').join('')
       +((!ts.length&&!ds.length&&!(ghostBy[iso]||[]).length)?'<div class="mini" style="text-align:center;padding-top:12px">—</div>':'')
@@ -918,7 +925,7 @@ function viewCalendar(){
       .concat((ghostBy[iso]||[]).map(x=>({t:x.title,c:'c-blue ghost',pre:'🔁 '})));
     h+='<div class="cal-c'+(iso===t?' today':'')+(iso===CAL_SEL?' sel':'')+((wd===0||wd===6)?' wknd':'')+'" onclick="setCalDay(\''+iso+'\')" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')">'
       +'<div class="cal-d">'+d+(chips.length?' · '+chips.length:'')+'</div>'
-      +chips.slice(0,3).map(x=>'<div class="cal-chip '+x.c+'"'+((x.id&&!VIEWALL)?' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab"':'')+' title="'+esc(x.pre+x.t)+'">'+x.pre+esc(x.t)+'</div>').join('')
+      +chips.slice(0,3).map(x=>'<div class="cal-chip '+x.c+'"'+((x.id)?' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab"':'')+' title="'+esc(x.pre+x.t)+'">'+x.pre+esc(x.t)+'</div>').join('')
       +(chips.length>3?'<div class="mini">+'+(chips.length-3)+' încă</div>':'')
       +'</div>';
   }
@@ -933,7 +940,7 @@ function viewCalendar(){
     +(selGhost.length?'<div style="margin-top:8px"><span class="badge b-gray">🔁 Repetări programate: '+selGhost.length+'</span>'
       +selGhost.map(x=>'<div class="day-item" style="opacity:.7">🔁 '+esc(x.title)+' <span class="mini">· '+esc(proj(x.projectId).name)+' · '+RECUR_LABEL[x.recur]+'</span></div>').join('')+'</div>':'')
     +((!sel.length&&!selDone.length&&!selGhost.length)?'<div class="empty">Nimic în această zi.</div>':'')
-    +((CAL_SEL<=t&&!VIEWALL)?'<div class="row" style="margin-top:10px"><input class="grow" id="rc-title" placeholder="Am mai făcut în această zi… (Enter)" onkeydown="if(event.key===\'Enter\')addRetro()">'
+    +((CAL_SEL<=t)?'<div class="row" style="margin-top:10px"><input class="grow" id="rc-title" placeholder="Am mai făcut în această zi… (Enter)" onkeydown="if(event.key===\'Enter\')addRetro()">'
       +'<select id="rc-proj">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
       +'<button class="ghost" onclick="addRetro()">✓ Adaugă ca finalizat</button></div>':'')
     +'</div>';
@@ -943,9 +950,12 @@ function viewCalendar(){
 function addRetro(){
   const el=document.getElementById('rc-title');const txt=el.value.trim();if(!txt)return;
   if(CAL_SEL>today())return;
-  dl(CAL_SEL).completed.push({id:'r'+Date.now(),title:txt,projectId:document.getElementById('rc-proj').value,type:'normal',retro:true});
+  const pid=document.getElementById('rc-proj').value;
+  withProjOwner(pid,(realPid)=>{dl(CAL_SEL).completed.push({id:'r'+Date.now(),title:txt,projectId:realPid,type:'normal',retro:true});});
   save();render();
 }
+/* în Total, proiectul ales (id compus) spune cărui utilizator îi aparține acțiunea */
+function withProjOwner(pid,fn){const o=ownerOf(pid);if(!o)return fn(pid);const real=S;S=o.pr.data;try{return fn(o.rid);}finally{S=real;}}
 
 /* ---------- mindmap: pune-ți gândurile în ordine ---------- */
 let MM_SEL=null,MM_NODE=null,MM_DRAG=null,MM_ZOOM=1,MM_BOUND=false;
@@ -1103,9 +1113,9 @@ function viewMindmap(){
 /* ---------- banc de idei ---------- */
 function viewIdei(){
   const act=S.ideas.filter(i=>!i.promoted);
-  let h=VIEWALL?'':'<div class="card"><h2>💡 Banc de idei</h2><p class="mini" style="margin:4px 0 10px">Parchează aici ideile de implementat „când va fi timp”. Prima linie e titlul; dedesubt detaliezi cât vrei — folosește „- ” pentru buletele și spații la început de rând pentru subpuncte.</p>'
+  let h='<div class="card"><h2>💡 Banc de idei</h2><p class="mini" style="margin:4px 0 10px">Parchează aici ideile de implementat „când va fi timp”. Prima linie e titlul; dedesubt detaliezi cât vrei — folosește „- ” pentru buletele și spații la început de rând pentru subpuncte.</p>'
     +'<textarea id="idea-txt" rows="4" placeholder="Titlul ideii&#10;- primul aspect&#10;- al doilea aspect&#10;   - subpunct"></textarea>'
-    +'<div class="row" style="margin-top:8px;justify-content:flex-end"><button class="primary" onclick="addIdea()">Salvează ideea</button></div></div>';
+    +'<div class="row" style="margin-top:8px;justify-content:flex-end">'+(VIEWALL?'<select id="ia-user">'+ROOT.profiles.map(p=>'<option value="'+p.id+'">👤 '+esc(p.name)+'</option>').join('')+'</select>':'')+'<button class="primary" onclick="addIdea()">Salvează ideea</button></div></div>';
   h+='<div class="card"><div class="sec-title"><h2>Idei parcate</h2><span class="badge b-blue">'+act.length+'</span></div>'
     +(act.length?act.map(ideaRow).join(''):'<div class="empty">Nicio idee parcată încă.</div>')+'</div>';
   const prom=S.ideas.filter(i=>i.promoted);
@@ -1120,7 +1130,7 @@ function ideaRow(i){
   return '<div class="task"><div class="t-body"><div class="t-title">'+esc(ideaTitle(i))+'</div>'
     +(body?'<div class="idea-body">'+esc(body)+'</div>':'')
     +'<div class="t-meta" style="margin-top:6px"><span class="mini">adăugată '+fmt(i.createdAt)+(i.updatedAt?' · modificată '+fmt(i.updatedAt):'')+'</span></div>'
-    +(VIEWALL?'</div></div>':'<div class="row" style="margin-top:6px">'
+    +('<div class="row" style="margin-top:6px">'
     +'<select id="ip-'+i.id+'">'+projOpen().map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<select id="it-'+i.id+'"><option value="imbunatatit">De îmbunătățit (30 zile)</option><option value="normal">Normal (azi)</option><option value="urgent">Prioritar (2 zile lucr.)</option></select>'
     +'<button class="ghost" onclick="promoteIdea(\''+i.id+'\')">→ Fă-o task</button></div></div>'
@@ -1129,7 +1139,9 @@ function ideaRow(i){
 }
 function addIdea(){
   const el=document.getElementById('idea-txt');const txt=el.value.trim();if(!txt)return;
-  S.ideas.push({id:'i'+Date.now(),text:txt,createdAt:today()});save();render();
+  const us=document.getElementById('ia-user');
+  const target=(VIEWALL&&us)?(ROOT.profiles.find(p=>p.id===us.value)||ROOT.profiles[0]).data:S;
+  target.ideas.push({id:'i'+Date.now(),text:txt,createdAt:today()});save();render();
 }
 function editIdea(id){
   const i=S.ideas.find(x=>x.id===id);if(!i)return;
@@ -1138,7 +1150,7 @@ function editIdea(id){
     +'<p class="mini" style="margin:4px 0 10px">Prima linie = titlul. „- ” pentru buletele, spații pentru subpuncte.</p>'
     +'<textarea id="ei-txt" rows="10">'+esc(i.text)+'</textarea>'
     +'<div class="row" style="margin-top:12px;justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button>'
-    +'<button class="primary" onclick="saveIdeaEdit(\''+i.id+'\')">Salvează</button></div></div></div>';
+    +'<button class="primary" onclick="saveIdeaEdit(\''+aid(i.id)+'\')">Salvează</button></div></div></div>';
   setTimeout(()=>{const e=document.getElementById('ei-txt');if(e)e.focus();},50);
 }
 function saveIdeaEdit(id){
@@ -1149,7 +1161,9 @@ function saveIdeaEdit(id){
 }
 function promoteIdea(id){
   const i=S.ideas.find(x=>x.id===id);if(!i)return;
-  const tk=addTask(ideaTitle(i),document.getElementById('ip-'+id).value,document.getElementById('it-'+id).value,null,null,null,false);
+  const ipEl=document.getElementById('ip-'+aid(id))||document.getElementById('ip-'+id),itEl=document.getElementById('it-'+aid(id))||document.getElementById('it-'+id);
+  let pidSel=ipEl.value;const po=ownerOf(pidSel);if(po)pidSel=po.rid;
+  const tk=addTask(ideaTitle(i),pidSel,itEl.value,null,null,null,false);
   const items=ideaBody(i).split('\n').map(s=>s.replace(/^[\s•*\-]+/,'').trim()).filter(Boolean);
   if(items.length)tk.checklist=items.map(x=>({txt:x,done:false}));
   i.promoted=true;i.promotedAt=today();save();render();
@@ -1167,8 +1181,8 @@ function projCard(p){
   return '<div class="card"><div class="sec-title"><span class="proj-dot" style="background:'+p.color+'"></span><h2>'+esc(p.name)+'</h2>'
     +'<span class="badge '+ps[1]+'">'+ps[0]+'</span><span class="badge b-gray">'+st.active+' deschise · '+st.done+' închise</span>'
     +(st.over?'<span class="badge b-red">'+st.over+' depășite</span>':'')
-    +(VIEWALL?'':'<button class="icon-btn" style="margin-left:auto" title="Obiectiv, stadiu, nume" onclick="editProject(\''+p.id+'\')">✏️</button>')+'</div>'
-    +(p.obj?'<div class="mini" style="margin:-4px 0 8px">🎯 '+esc(p.obj)+'</div>':(VIEWALL?'':'<div class="mini" style="margin:-4px 0 8px;font-style:italic">Fără obiectiv — apasă ✏️ și scrie într-o frază unde vrei să ajungi.</div>'))
+    +'<button class="icon-btn" style="margin-left:auto" title="Obiectiv, stadiu, nume" onclick="editProject(\''+p.id+'\')">✏️</button></div>'
+    +(p.obj?'<div class="mini" style="margin:-4px 0 8px">🎯 '+esc(p.obj)+'</div>':('<div class="mini" style="margin:-4px 0 8px;font-style:italic">Fără obiectiv — apasă ✏️ și scrie într-o frază unde vrei să ajungi.</div>'))
     +'<div class="tbar" style="margin:0 0 4px"><div style="width:'+st.pct+'%"></div></div><div class="mini" style="margin-bottom:8px">'+st.pct+'% realizat ('+st.done+'/'+st.total+')</div>'
     +(ts.length?ts.map(x=>taskRow(x)).join(''):'<div class="empty">Niciun task deschis.</div>')+'</div>';
 }
@@ -1184,7 +1198,7 @@ function editProject(id){
     +'<label class="mini" style="display:block;margin:12px 0 8px">Nume<input id="ep-name" style="width:100%" value="'+esc(p.name)+'"></label>'
     +'<label class="mini" style="display:block;margin-bottom:8px">Obiectiv — o frază: ce înseamnă „gata”?<textarea id="ep-obj" rows="2">'+esc(p.obj||'')+'</textarea></label>'
     +'<label class="mini" style="display:block;margin-bottom:14px">Stadiu<select id="ep-st" style="width:100%">'+Object.keys(PSTAT).map(k=>'<option value="'+k+'"'+(k===(p.status||'activ')?' selected':'')+'>'+PSTAT[k][0]+'</option>').join('')+'</select></label>'
-    +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button><button class="primary" onclick="saveProject(\''+p.id+'\')">Salvează</button></div></div></div>';
+    +'<div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeEdit()">Renunță</button><button class="primary" onclick="saveProject(\''+aid(p.id)+'\')">Salvează</button></div></div></div>';
 }
 function saveProject(id){const p=S.projects.find(x=>x.id===id);if(!p)return;
   const n=document.getElementById('ep-name').value.trim();if(n)p.name=n;
@@ -1432,7 +1446,7 @@ function render(){
   if(VIEWALL){
     const real=S;S=mergedData();
     try{
-      v.innerHTML='<div class="notif" style="margin-bottom:10px">👥 <b>Total</b> — vezi toți utilizatorii împreună, doar citire. Pentru acțiuni comută pe un utilizator din selector.</div>'
+      v.innerHTML='<div class="mini" style="margin-bottom:8px">👥 <b>Total</b> — toți utilizatorii împreună. Orice modificare ajunge automat la utilizatorul căruia îi aparține taskul; la adăugare alegi utilizatorul din selector.</div>'
         +(TAB==='setari'?'<div class="card"><div class="empty">Setările sunt per utilizator — comută pe un utilizator din selector.</div></div>'
         :TAB==='azi'?viewAzi():TAB==='calendar'?viewCalendar():TAB==='toate'?viewToate():TAB==='proiecte'?viewProiecte():TAB==='mindmap'?viewMindmap():TAB==='idei'?viewIdei():viewRapoarte());
     }finally{S=real;}
@@ -1446,6 +1460,21 @@ function render(){
     +ROOT.profiles.map(p=>'<option value="'+p.id+'"'+(p.id===ROOT.active&&!VIEWALL?' selected':'')+'>👤 '+esc(p.name)+'</option>').join('')
     +'<option value="__all"'+(VIEWALL?' selected':'')+'>👥 Total</option></select>';
 }
+/* ---------- Total editabil: id-urile compuse „utilizator§id” sunt rezolvate către proprietar ---------- */
+let OWNER_CTX=null;
+function ownerOf(id){if(typeof id!=='string'||id.indexOf('§')<0)return null;const k=id.indexOf('§');const pr=ROOT&&ROOT.profiles.find(p=>p.id===id.slice(0,k));return pr?{pr,rid:id.slice(k+1)}:null;}
+function aid(id){return (VIEWALL&&OWNER_CTX)?OWNER_CTX+'§'+id:id;}
+function wrapOwner(name){
+  const f=window[name];if(typeof f!=='function')return;
+  window[name]=function(id){
+    const o=ownerOf(id);if(!o)return f.apply(this,arguments);
+    const args=Array.prototype.slice.call(arguments);args[0]=o.rid;
+    const real=S,prev=OWNER_CTX;S=o.pr.data;OWNER_CTX=o.pr.id;migrateOne(S);
+    try{return f.apply(this,args);}finally{S=real;OWNER_CTX=prev;}
+  };
+}
+['completeTask','deleteTask','editDeadline','editTask','saveEdit','togglePropose','toggleCheck','depAdd','depRemove',
+ 'promoteIdea','deleteIdea','editIdea','saveIdeaEdit','editProject','saveProject','dropApply'].forEach(wrapOwner);
 main();
 </script>
 </body>
