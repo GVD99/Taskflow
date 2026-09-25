@@ -12,6 +12,10 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;padding:16px;max-width:1100px;margin:0 auto}
+.wide2{display:block}.qa-toggle{display:none}.qa-more{display:contents}
+.t-title.editing input{width:100%;font-weight:500;padding:4px 8px}
+.task{touch-action:pan-y;position:relative;transition:transform .15s}.task.swipe-r{background:var(--green-bg)}.task.swipe-l{background:var(--amber-bg)}
+@media(min-width:1250px){body{max-width:1500px}.wide2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px;align-items:start}.wide2>div>.card:first-child{margin-top:0}}
 h1{font-size:18px;font-weight:700}
 h2{font-size:14px;font-weight:600;margin-bottom:8px}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}
@@ -93,12 +97,30 @@ details summary{cursor:pointer;font-weight:600;font-size:13px;padding:4px 0}
 .mm-node.root{font-weight:700;font-size:15px;border-width:3px;background:var(--blue-bg)}
 .mm-node.sel{outline:3px solid rgba(37,99,235,.35);box-shadow:0 4px 14px rgba(0,0,0,.15)}
 .mm-node:active{cursor:grabbing}
-.hb{padding:4px 10px;font-size:12.5px}.hb.on{background:var(--green-bg);border-color:var(--green);color:var(--green)}.hb.min{background:var(--amber-bg);border-color:var(--amber);color:var(--amber)}
-.hgrid{display:flex;flex-wrap:wrap;gap:3px;margin-top:8px}
-.hcell{width:16px;height:16px;border-radius:4px;background:#eceff1;cursor:pointer;display:inline-block}.hcell.ok{background:var(--green)}.hcell.min{background:var(--amber)}.hcell:hover{outline:2px solid var(--blue)}
+.hstrip{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;margin-top:6px}
+.hb{padding:5px 9px;font-size:12.5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.hb .st{float:right;color:var(--muted);font-size:11px}.hb.on{background:var(--green-bg);border-color:var(--green);color:var(--green)}.hb.min{background:var(--amber-bg);border-color:var(--amber);color:var(--amber)}
+.hgrid{display:grid;grid-template-columns:repeat(14,1fr);gap:3px;margin-top:8px;max-width:440px}
+.hcell{aspect-ratio:1;width:100%;border-radius:4px;background:#eceff1;cursor:pointer;display:inline-block}.hcell.ok{background:var(--green)}.hcell.min{background:var(--amber)}.hcell:hover{outline:2px solid var(--blue)}
 .tbar{height:6px;border-radius:3px;background:var(--blue-bg);overflow:hidden}.tbar>div{height:100%;background:var(--green)}
 textarea{width:100%;resize:vertical;line-height:1.5}
-@media(max-width:640px){body{padding:10px}}
+@media(max-width:640px){
+  body{padding:8px}h1{font-size:16px}.top{gap:6px}
+  .tab{padding:6px 9px;font-size:12px}
+  .card{padding:11px}
+  .row>input,.row>select,.row>textarea{flex:1 1 100%;width:100%}
+  .row>label.mini{flex:1 1 100%}.row>label.mini input,.row>label.mini select{width:100%}
+  .task{flex-wrap:wrap}.task>div:last-child{width:100%;display:flex;justify-content:flex-end;gap:2px;padding-left:26px}
+  .icon-btn{padding:4px 7px;font-size:15px}
+  .t-title{font-size:13.5px}.badge{font-size:10px}
+  .sec-title{flex-wrap:wrap;gap:6px}
+  .hstrip{grid-template-columns:repeat(2,1fr)}
+  .hgrid{max-width:100%}
+  #mm-wrap{height:60vh}.wk-grid{grid-template-columns:repeat(1,1fr)}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .qa-toggle{display:inline-block;flex:0 0 auto!important;width:auto!important}.qa-more{display:none;width:100%;flex-wrap:wrap;gap:8px}.qa-more.open{display:flex}
+  #qa-title{flex:1 1 auto!important;width:auto!important}
+}
 </style>
 </head>
 <body>
@@ -559,6 +581,18 @@ function addTask(title,projectId,type,deadline,recur,delegatedTo,proposedToday){
   if(proposedToday)dl(t).proposed.push(tk.id);
   save();return tk;
 }
+function inlineEdit(ev,id){
+  const el=ev.currentTarget;if(el.classList.contains('editing'))return;
+  const cur=el.textContent;el.classList.add('editing');
+  el.innerHTML='<input value="'+esc(cur)+'">';const inp=el.querySelector?el.querySelector('input'):null;if(!inp)return;
+  let done=false;const fin=(saveIt)=>{if(done)return;done=true;const v=inp.value.trim();if(saveIt&&v&&v!==cur)inlineSave(id,v);else render();};
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fin(true);}else if(e.key==='Escape'){fin(false);}});
+  inp.addEventListener('blur',()=>fin(true));inp.focus();try{const L=inp.value.length;inp.setSelectionRange(L,L);}catch(x){}
+}
+function inlineSave(id,v){const tk=S.tasks.find(x=>x.id===id);if(tk){tk.title=v;save();}render();}
+function postponeTomorrow(id){const tk=S.tasks.find(x=>x.id===id);if(!tk)return;const d=addDays(tk.deadline>today()?tk.deadline:today(),1);
+  (tk.postponements=tk.postponements||[]).push({date:today(),auto:false,from:tk.deadline,to:d,kind:'manual'});tk.deadline=d;tk.alert=false;if(tk.type==='urgent')tk.renewCount=0;if(tk.type==='normal')tk.manualDue=true;
+  const p=dl(today()).proposed;const i=p.indexOf(id);if(i>=0)p.splice(i,1);save();render();}
 function togglePropose(id){const p=dl(today()).proposed;const i=p.indexOf(id);if(i>=0)p.splice(i,1);else p.push(id);save();render();}
 function azOrder(){if(VIEWALL){ROOT.totalOrder=ROOT.totalOrder||{};const t=today();return ROOT.totalOrder[t]=ROOT.totalOrder[t]||[];}const d=dl(today());if(!d.order)d.order=[];return d.order;}
 function setOrder(ids){if(VIEWALL){ROOT.totalOrder=ROOT.totalOrder||{};ROOT.totalOrder[today()]=ids;}else dl(today()).order=ids;}
@@ -642,9 +676,9 @@ function taskRow(tk,opts){
     badges+='<span class="badge b-gray">☑ '+cd+'/'+tk.checklist.length+'</span>';
     clHtml='<div style="margin-top:5px">'+tk.checklist.map((c,ix)=>'<div class="cl-item'+(c.done?' done':'')+'" onclick="toggleCheck(\''+tk.id+'\','+ix+')">'+(c.done?'☑':'☐')+' <span>'+esc(c.txt)+'</span></div>').join('')+'</div>';
   }
-  return '<div class="task'+(tk.alert?' alerted':'')+'">'
+  return '<div class="task'+(tk.alert?' alerted':'')+'" data-id="'+tk.id+'">'
     +'<div class="chk" title="Finalizează" onclick="completeTask(\''+tk.id+'\')"></div>'
-    +'<div class="t-body"><div class="t-title">'+esc(tk.title)+'</div>'
+    +'<div class="t-body"><div class="t-title" title="Click pentru editare rapidă" onclick="inlineEdit(event,\''+tk.id+'\')" style="cursor:text">'+esc(tk.title)+'</div>'
     +'<div class="t-meta"><span><span class="proj-dot" style="background:'+p.color+'"></span>'+esc(p.name)+'</span>'
     +dueLabel(tk)+badges+'</div>'+clHtml+'</div>'
     +('<div>'
@@ -665,6 +699,12 @@ let TAB='azi';
 function setTab(t){TAB=t;document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('on',el.dataset.tab===t));render();}
 
 function viewAzi(){
+  const inner=viewAziInner();
+  if(VIEWALL||!(window.innerWidth>=1250))return inner;
+  const wasMode=CALMODE;CALMODE='sapt';const wk=viewWeek();CALMODE=wasMode;
+  return '<div class="wide2"><div>'+inner+'</div><div>'+wk+'</div></div>';
+}
+function viewAziInner(){
   const t=today();
   const active=S.tasks.filter(x=>x.status==='active');
   const proposedIds=dl(t).proposed;
@@ -679,12 +719,15 @@ function viewAzi(){
     +(VIEWALL?'<select id="qa-user" onchange="qaUserChanged(this.value)" title="Pentru cine adaug taskul">'
         +ROOT.profiles.map(p=>'<option value="'+p.id+'"'+(p.id===(VA_USER||ROOT.active)?' selected':'')+'>👤 '+esc(p.name)+'</option>').join('')+'</select>':'')
     +'<input class="grow" id="qa-title" placeholder="Task nou… (Enter pentru adăugare)" onkeydown="if(event.key===\'Enter\')quickAdd()">'
+    +'<button class="ghost qa-toggle" title="Proiect, tip, scadență…" onclick="document.getElementById(\'qa-more\').classList.toggle(\'open\')">⋯</button>'
+    +'<div class="qa-more" id="qa-more">'
     +'<select id="qa-proj">'+qaProj.filter(p=>p.status!=='incheiat').map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select>'
     +'<select id="qa-type"><option value="normal">Normal ('+(S.cfg.norm?'+'+S.cfg.norm+' zile':'azi')+')</option><option value="urgent">Prioritar ('+S.cfg.urg+' zile lucr.)</option><option value="imbunatatit">De îmbunătățit ('+S.cfg.imb+' zile)</option><option value="waiting">În așteptare (verific în '+S.cfg.wait+' zile lucr.)</option></select>'
     +'<select id="qa-recur"><option value="">fără recurență</option><option value="zi">zilnic</option><option value="sapt">săptămânal</option><option value="luna">lunar</option><option value="trim">trimestrial</option><option value="sem">semestrial</option><option value="an">anual</option></select>'
     +'<input type="date" id="qa-dead" title="Scadență (opțional — dacă o lași goală se aplică termenul implicit al tipului)" style="width:140px">'
     +'<label class="mini" title="Data de expirare: după ea taskul nu mai apare (la recurente se oprește seria)">expiră la <input type="date" id="qa-until" style="width:140px"></label>'
     +'<input id="qa-deleg" placeholder="Delegat către / aștept de la…" style="width:150px">'
+    +'</div>'
     +'<button class="primary" onclick="quickAdd()">Adaugă</button></div>'
     +'<div id="qa-hint"></div></div>';
   h+='<div class="card"><div class="sec-title"><h2>🎯 Ziua mea</h2><span class="badge '+(urgents.length?'b-red':'b-blue')+'">'+azi.length+'</span>'
@@ -891,6 +934,7 @@ function viewWeek(){
     h+='<div class="wk-col'+(iso===t?' today':'')+'" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')"><div class="wk-h">'+names[i]+'<br><span class="mini">'+fmt(iso)+'</span></div>'
       +ts.map(x=>'<div class="wk-item '+((x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue')+'"'+(' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab" title="Click = editare · Trage = mută scadența" onclick="editTask(\''+x.id+'\')"')+'>'+esc(x.title)+'</div>').join('')
       +ds.map(c=>'<div class="wk-item c-green">✓ '+esc(c.title)+'</div>').join('')
+      +habitDoneList(iso).map(h=>'<div class="wk-item c-green">🌱 '+esc(h.name)+(h.val!=null?' '+h.val+(h.unit||''):'')+'</div>').join('')
       +(ghostBy[iso]||[]).map(x=>'<div class="wk-item c-blue ghost" title="Repetare programată — '+RECUR_LABEL[x.recur]+'">🔁 '+esc(x.title)+'</div>').join('')
       +((!ts.length&&!ds.length&&!(ghostBy[iso]||[]).length)?'<div class="mini" style="text-align:center;padding-top:12px">—</div>':'')
       +'</div>';
@@ -929,11 +973,13 @@ function viewCalendar(){
     const ts=(byDate[iso]||[]),ds=(doneBy[iso]||[]);
     const chips=ts.map(x=>({t:x.title,c:(x.type==='urgent'||escalated(x))?'c-red':x.type==='waiting'?'c-gray':x.type==='normal'?'c-amber':'c-blue',pre:'',id:x.id}))
       .concat(ds.map(x=>({t:x.title,c:'c-green',pre:'✓ '})))
-      .concat((ghostBy[iso]||[]).map(x=>({t:x.title,c:'c-blue ghost',pre:'🔁 '})));
+      .concat((ghostBy[iso]||[]).map(x=>({t:x.title,c:'c-blue ghost',pre:'🔁 '})))
+      .concat(habitDoneList(iso).map(h=>({t:h.name+(h.val!=null?' '+h.val+(h.unit||''):''),c:'c-green',pre:'🌱 '})));
+    const CAP=8;
     h+='<div class="cal-c'+(iso===t?' today':'')+(iso===CAL_SEL?' sel':'')+((wd===0||wd===6)?' wknd':'')+'" onclick="setCalDay(\''+iso+'\')" ondragover="event.preventDefault()" ondrop="dropTask(event,\''+iso+'\')">'
       +'<div class="cal-d">'+d+(chips.length?' · '+chips.length:'')+'</div>'
-      +chips.slice(0,3).map(x=>'<div class="cal-chip '+x.c+'"'+((x.id)?' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab"':'')+' title="'+esc(x.pre+x.t)+'">'+x.pre+esc(x.t)+'</div>').join('')
-      +(chips.length>3?'<div class="mini">+'+(chips.length-3)+' încă</div>':'')
+      +chips.slice(0,CAP).map(x=>'<div class="cal-chip '+x.c+'"'+((x.id)?' draggable="true" ondragstart="dragTask(event,\''+x.id+'\')" style="cursor:grab"':'')+' title="'+esc(x.pre+x.t)+'">'+x.pre+esc(x.t)+'</div>').join('')
+      +(chips.length>CAP?'<div class="mini">+'+(chips.length-CAP)+' încă</div>':'')
       +'</div>';
   }
   h+='</div><p class="mini" style="margin-top:8px"><span class="cal-chip c-red" style="display:inline">Prioritar</span> <span class="cal-chip c-amber" style="display:inline">Normal</span> <span class="cal-chip c-blue" style="display:inline">De îmbunătățit</span> <span class="cal-chip c-gray" style="display:inline">În așteptare</span> <span class="cal-chip c-green" style="display:inline">✓ Finalizat</span> <span class="cal-chip c-blue ghost" style="display:inline">🔁 Repetare viitoare</span> — termene, istoric și proiecția recurentelor.</p></div>';
@@ -944,6 +990,7 @@ function viewCalendar(){
     +(sel.length?sel.map(x=>taskRow(x)).join(''):'')
     +(selDone.length?'<div style="margin-top:8px"><span class="badge b-green">Finalizate în această zi: '+selDone.length+'</span>'
       +selDone.map(c=>'<div class="day-item" style="color:var(--green)">✓ '+esc(c.title)+' <span class="mini">· '+esc(proj(c.projectId).name)+'</span></div>').join('')+'</div>':'')
+    +habitDayDetail(CAL_SEL)
     +(selGhost.length?'<div style="margin-top:8px"><span class="badge b-gray">🔁 Repetări programate: '+selGhost.length+'</span>'
       +selGhost.map(x=>'<div class="day-item" style="opacity:.7">🔁 '+esc(x.title)+' <span class="mini">· '+esc(proj(x.projectId).name)+' · '+RECUR_LABEL[x.recur]+'</span></div>').join('')+'</div>':'')
     +((!sel.length&&!selDone.length&&!selGhost.length)?'<div class="empty">Nimic în această zi.</div>':'')
@@ -1138,12 +1185,27 @@ function habitMark(id,d){
   L[id]={lvl,val,ok};save();render();
 }
 function habitTick(id){habitMark(id,today());}
+function habitDoneList(d){
+  if(!modsOn('habits')||!(S.habits||[]).length)return [];const L=(S.habitLog||{})[d];if(!L)return [];
+  return S.habits.filter(h=>!h.archived&&L[h.id]&&L[h.id].ok).map(h=>({name:h.name,val:L[h.id].val,unit:h.unit}));
+}
+function habitDaySummary(d){
+  if(!modsOn('habits')||!(S.habits||[]).length)return null;const L=(S.habitLog||{})[d];if(!L)return null;
+  const hs=S.habits.filter(h=>!h.archived);const ok=hs.filter(h=>L[h.id]&&L[h.id].ok);if(!ok.length&&!hs.some(h=>L[h.id]))return null;
+  return {ok:ok.length,total:hs.length,txt:ok.length+'/'+hs.length+' obiceiuri',names:ok.map(h=>h.name).join(' · ')};
+}
+function habitDayDetail(d){
+  if(!modsOn('habits')||!(S.habits||[]).length)return '';const L=(S.habitLog||{})[d]||{};const hs=S.habits.filter(h=>!h.archived);
+  const items=hs.map(h=>{const e=L[h.id];return '<span class="badge '+(e?(e.ok?'b-green':'b-amber'):'b-gray')+'" style="margin:2px 4px 2px 0;cursor:pointer" onclick="habitMark(\''+h.id+'\',\''+d+'\')">'+(e?(e.ok?'✓ ':'◐ '):'○ ')+esc(h.name)+(e&&e.val!=null?' '+e.val+(h.unit||''):'')+'</span>';}).join('');
+  const ok=hs.filter(h=>L[h.id]&&L[h.id].ok).length;
+  return '<div style="margin-top:8px"><span class="badge b-green">🌱 Obiceiuri '+ok+'/'+hs.length+'</span><div style="margin-top:4px">'+items+'</div></div>';
+}
 function habitStrip(){
   if(VIEWALL||!modsOn('habits')||!(S.habits||[]).length)return '';
   const L=habitLog(today());const hs=S.habits.filter(h=>!h.archived);const done=hs.filter(h=>L[h.id]&&L[h.id].ok).length;
-  return '<div class="card" style="padding:8px 12px"><div class="row" style="gap:6px"><span class="mini" style="margin-right:2px">Obiceiuri <b>'+done+'/'+hs.length+'</b></span>'
-    +hs.map(h=>{const e=L[h.id];const st=habitStreak(h);return '<button class="ghost hb'+(e&&e.ok?' on':e?' min':'')+'" onclick="habitTick(\''+h.id+'\')" title="'+esc(h.identity||'')+(h.target!=null?' · țintă '+h.target+(h.unit||''):'')+'">'
-      +(e&&e.ok?'✓ ':e?'◐ ':'')+esc(h.name)+(st?' <span class="mini">🔥'+st+'</span>':'')+'</button>';}).join('')+'</div></div>';
+  return '<div class="card" style="padding:8px 12px"><div class="row" style="justify-content:space-between"><span class="mini">🌱 Obiceiuri azi <b>'+done+'/'+hs.length+'</b></span><button class="ghost" style="padding:2px 9px;font-size:12px" onclick="setTab(\'obiceiuri\')">detalii</button></div><div class="hstrip">'
+    +hs.map(h=>{const e=L[h.id];const st=habitStreak(h);return '<button class="ghost hb'+(e&&e.ok?' on':e?' min':'')+'" onclick="habitTick(\''+h.id+'\')" title="'+esc(h.name)+(h.identity?' — '+esc(h.identity):'')+(h.target!=null?' · țintă '+h.target+(h.unit||''):'')+'">'
+      +(e&&e.ok?'✓ ':e?'◐ ':'○ ')+esc(h.name)+(st?'<span class="st">🔥'+st+'</span>':'')+'</button>';}).join('')+'</div></div>';
 }
 function habitGrid(h,days){let g='<div class="hgrid">';for(let i=days-1;i>=0;i--){const d=addDays(today(),-i);const e=habitEntry(h,d);
   g+='<span class="hcell '+(e?(e.ok?'ok':'min'):'')+'" title="'+fmt(d)+(e?(e.ok?' ✓':' ◐')+(e.val!=null?' '+e.val+(h.unit||''):''):'')+'" onclick="habitMark(\''+h.id+'\',\''+d+'\')"></span>';}return g+'</div>';}
@@ -1155,11 +1217,11 @@ function viewObiceiuri(){
     +'<p class="mini">Click pe pătrățele bifezi/scoți bifa pentru orice zi (ultimele 6 săptămâni). 🔥 = seria curentă, 🏆 = cea mai lungă, % = reușite în ultimele 30 de zile.</p>'
     +'<div class="row" style="margin-top:8px"><input class="grow" id="hb-name" placeholder="Obicei nou… (ex. Somn decent)"><input id="hb-ident" placeholder="Identitate (ex. Om odihnit)" style="width:180px"><input id="hb-target" placeholder="Țintă (opț.)" style="width:90px"><input id="hb-unit" placeholder="unit." style="width:60px"><button class="ghost" onclick="habitAdd()">+ Adaugă</button></div></div>';
   h+=hs.map((x,ix)=>{const e=L[x.id];const st=habitStreak(x),best=habitBest(x),rate=habitRate(x,30);
-    return '<div class="card"><div class="sec-title"><h2>'+esc(x.name)+'</h2><span class="mini">'+esc(x.identity||'')+(x.target!=null?' · țintă '+x.target+(x.unit||''):'')+'</span>'
-      +'<span class="badge b-gray">🔥 '+st+'</span><span class="badge b-gray">🏆 '+best+'</span><span class="badge '+(rate>=80?'b-green':rate>=50?'b-amber':'b-red')+'">'+rate+'%</span>'
-      +'<span style="margin-left:auto"><button class="ghost hb'+(e&&e.ok?' on':e?' min':'')+'" style="padding:3px 10px" onclick="habitTick(\''+x.id+'\')">'+(e&&e.ok?'✓ azi':e?'◐ azi':'bifează azi')+'</button>'
+    return '<div class="card"><div class="sec-title" style="margin-bottom:4px"><h2>'+esc(x.name)+'</h2><span class="badge b-gray">🔥 '+st+'</span><span class="badge b-gray">🏆 '+best+'</span><span class="badge '+(rate>=80?'b-green':rate>=50?'b-amber':'b-red')+'">'+rate+'%</span></div>'
+      +'<div class="mini" style="margin-bottom:6px">'+esc(x.identity||'')+(x.target!=null?' · țintă '+x.target+(x.unit||''):'')+'</div>'
+      +'<div class="row" style="gap:4px"><button class="ghost hb'+(e&&e.ok?' on':e?' min':'')+'" style="width:auto;padding:3px 10px" onclick="habitTick(\''+x.id+'\')">'+(e&&e.ok?'✓ azi':e?'◐ azi':'bifează azi')+'</button>'
       +'<button class="icon-btn" title="Mai sus" onclick="habitMove(\''+x.id+'\',-1)">▲</button><button class="icon-btn" title="Mai jos" onclick="habitMove(\''+x.id+'\',1)">▼</button>'
-      +'<button class="icon-btn" title="Editează" onclick="habitEdit(\''+x.id+'\')">✏️</button><button class="icon-btn" title="Arhivează" onclick="habitArchive(\''+x.id+'\',1)">📦</button></span></div>'
+      +'<button class="icon-btn" title="Editează" onclick="habitEdit(\''+x.id+'\')">✏️</button><button class="icon-btn" title="Arhivează" onclick="habitArchive(\''+x.id+'\',1)">📦</button></div>'
       +habitGrid(x,42)+'</div>';}).join('');
   if(arch.length)h+='<div class="card"><details><summary>Arhivate ('+arch.length+')</summary>'+arch.map(x=>'<div class="day-item">'+esc(x.name)+' <button class="ghost" style="padding:2px 8px" onclick="habitArchive(\''+x.id+'\',0)">reactivează</button> <button class="icon-btn" onclick="habitDelete(\''+x.id+'\')">✕</button></div>').join('')+'</details></div>';
   return h;
@@ -1220,13 +1282,14 @@ function viewAbonamente(){
   h+=subs.map(s=>{const d=s.due?daysDiff(s.due):null;const hist=(s.history||[]).slice().reverse();
     return '<div class="card"><div class="sec-title"><h2>'+esc(s.name)+'</h2><span class="badge b-gray">'+esc(s.cat||'')+'</span><span class="mini">'+esc(s.holder||'')+'</span>'
       +(s.auto?'<span class="badge b-green">reînnoire automată</span>':'<span class="badge b-amber">manual</span>')
-      +'<span style="margin-left:auto"><button class="icon-btn" onclick="subEdit(\''+s.id+'\')">✏️</button><button class="icon-btn" onclick="subDelete(\''+s.id+'\')">✕</button></span></div>'
-      +'<div class="t-meta" style="margin-bottom:6px"><b>'+(s.price||0)+' '+esc(s.cur||'RON')+'</b>'+(s.cur!=='RON'?' ('+s.ron+' lei)':'')+'<span>· '+SUB_RECUR[s.recur]+'</span>'
-      +(s.due?'<span class="'+(d<0?'due-past':d<=7?'due-today':'')+'">⏱ '+fmt(s.due)+(d<0?' · depășit':d===0?' · azi':' · în '+d+' zile')+'</span>':'')
-      +(s.recur!=='unic'?'<span>· '+Math.round(subMonthly(s))+' lei/lună</span>':'')
-      +(s.sessIncl?'<span>· ședințe '+(s.sessUsed||0)+'/'+s.sessIncl+' <button class="ghost" style="padding:1px 7px" onclick="subSess(\''+s.id+'\',1)">+1</button><button class="ghost" style="padding:1px 7px" onclick="subSess(\''+s.id+'\',-1)">−1</button></span>':'')
-      +(s.note?'<span class="mini">'+esc(s.note)+'</span>':'')
-      +(s.due?'<button class="ghost" style="padding:2px 9px" onclick="subPay(\''+s.id+'\')">💳 Am plătit</button>':'')+'</div>'
+      +'<span style="margin-left:auto"><button class="icon-btn" title="Editează" onclick="subEdit(\''+s.id+'\')">✏️</button><button class="icon-btn" title="Șterge" onclick="subDelete(\''+s.id+'\')">✕</button></span></div>'
+      +'<div class="t-meta" style="margin-bottom:4px"><b style="font-size:14px">'+(s.price||0)+' '+esc(s.cur||'RON')+'</b>'+(s.cur!=='RON'?'<span class="mini">= '+s.ron+' lei</span>':'')+'<span class="badge b-gray">'+SUB_RECUR[s.recur]+'</span>'
+      +(s.recur!=='unic'?'<span class="mini">'+Math.round(subMonthly(s))+' lei/lună</span>':'')+'</div>'
+      +'<div class="t-meta" style="margin-bottom:8px">'
+      +(s.due?'<span class="'+(d<0?'due-past':d<=7?'due-today':'')+'">⏱ '+fmt(s.due)+(d<0?' · depășit':d===0?' · azi':' · în '+d+' zile')+'</span>':'<span class="mini">fără scadență</span>')
+      +(s.sessIncl?'<span>ședințe <b>'+(s.sessUsed||0)+'/'+s.sessIncl+'</b> <button class="ghost" style="padding:1px 7px" onclick="subSess(\''+s.id+'\',1)">+1</button><button class="ghost" style="padding:1px 7px" onclick="subSess(\''+s.id+'\',-1)">−1</button></span>':'')
+      +(s.note?'<span class="mini">'+esc(s.note)+'</span>':'')+'</div>'
+      +(s.due?'<div class="row" style="margin-bottom:6px"><button class="ghost" style="padding:4px 12px" onclick="subPay(\''+s.id+'\')">💳 Am plătit</button></div>':'')
       +(hist.length?'<details><summary class="mini">Istoric prețuri ('+hist.length+')</summary>'+hist.map((x,i)=>{const nx=hist[i+1];const vr=nx&&nx.ron?Math.round((x.ron-nx.ron)/nx.ron*1000)/10:null;
         return '<div class="day-item mini">'+fmt(x.d)+' — '+x.price+' '+x.cur+(x.cur!=='RON'?' ('+x.ron+' lei)':'')+(vr!=null?' <span class="'+(vr>0?'due-past':'')+'">'+(vr>0?'+':'')+vr+'%</span>':'')+(x.note?' · '+esc(x.note):'')+'</div>';}).join('')+'</details>':'')
       +'</div>';}).join('');
@@ -1627,8 +1690,22 @@ function wrapOwner(name){
     try{return f.apply(this,args);}finally{S=real;OWNER_CTX=prev;}
   };
 }
-['completeTask','deleteTask','editDeadline','editTask','saveEdit','togglePropose','toggleCheck','depAdd','depRemove',
+['completeTask','deleteTask','editDeadline','editTask','saveEdit','togglePropose','toggleCheck','depAdd','depRemove','inlineSave','postponeTomorrow',
  'promoteIdea','deleteIdea','editIdea','saveIdeaEdit','editProject','saveProject','dropApply'].forEach(wrapOwner);
+/* gesturi pe telefon */
+(function(){
+  let st=null,lp=null;
+  const task=e=>{let n=e.target;while(n&&n!==document.body){if(n.classList&&n.classList.contains('task')&&n.getAttribute('data-id'))return n;n=n.parentNode;}return null;};
+  document.addEventListener('touchstart',e=>{const n=task(e);if(!n)return;const t=e.touches[0];st={n,x:t.clientX,y:t.clientY,id:n.getAttribute('data-id'),moved:false};
+    lp=setTimeout(()=>{if(st&&!st.moved){const id=st.id;st=null;if(navigator.vibrate)navigator.vibrate(30);editTask(id);}},550);},{passive:true});
+  document.addEventListener('touchmove',e=>{if(!st)return;const t=e.touches[0];const dx=t.clientX-st.x,dy=t.clientY-st.y;
+    if(Math.abs(dy)>Math.abs(dx)||Math.abs(dx)>6){if(Math.abs(dy)>Math.abs(dx)){clearTimeout(lp);st=null;return;}st.moved=true;clearTimeout(lp);}
+    if(st.moved){st.n.style.transform='translateX('+Math.max(-120,Math.min(120,dx))+'px)';st.n.classList.toggle('swipe-r',dx>60);st.n.classList.toggle('swipe-l',dx<-60);}},{passive:true});
+  document.addEventListener('touchend',e=>{clearTimeout(lp);if(!st)return;const n=st.n,id=st.id;const t=e.changedTouches[0];const dx=t.clientX-st.x;st=null;
+    n.style.transform='';n.classList.remove('swipe-r','swipe-l');
+    if(dx>90)completeTask(id);else if(dx<-90)postponeTomorrow(id);},{passive:true});
+  document.addEventListener('touchcancel',()=>{clearTimeout(lp);if(st){st.n.style.transform='';st.n.classList.remove('swipe-r','swipe-l');}st=null;},{passive:true});
+})();
 main();
 </script>
 </body>
